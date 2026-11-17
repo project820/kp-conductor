@@ -10,6 +10,7 @@ KP Conductor의 버전별 릴리스 노트다.
 - 버전 규칙(RELEASING.md)과 변경 기록(CHANGELOG.md)을 추가했다.
 - README에 요청 하나가 처리되는 사용 흐름 도식을 추가했다.
 - `main`에 push하면 GitHub Actions가 테스트와 버전 검사를 실행한다. 둘 다 통과하면 태그와 GitHub 릴리스가 생긴다.
+  테스트는 Ubuntu(Python 3.9·3.12)와 macOS에서 실행한다.
 - `main` push 전에 버전과 릴리스 노트를 검사하는 pre-push 훅을 추가했다.
 - `cx --version`으로 설치한 엔진 버전을 확인한다. `cx doctor`도 `engine` 줄에 버전을 보여준다.
 - `cx skills off|on|list`로 스킬을 끄고 켠다. `config.toml`의 Conductor 전용 구역만 고친다.
