@@ -175,6 +175,26 @@ Codex 앱의 자동화 도구가 있으면 주 1회 예약을 제안한다.
 `cx backup`의 백업에는 `config.toml` 사본이 들어간다.
 비밀값이 있을 수 있으므로 백업 폴더를 공유하지 않는다.
 
+## 엔진 관리자(maintainer) 모드
+
+엔진 저장소를 직접 고치는 사람을 위한 설정이다.
+일반 사용자에게는 필요 없다.
+
+`<state>/local/settings.json`에 `maintainer` 항목을 직접 적는다.
+`retro.apply=notify`이면 회고가 엔진 개선을 로컬 저장소에 커밋한다.
+
+테스트와 독립 검토 2회를 통과한 커밋만 이 컴퓨터와 등록한 원격 컴퓨터에 설치한다.
+기본값 `propose`에서는 엔진 변경도 제안 파일로만 남긴다.
+
+```sh
+cx maintainer status
+cx maintainer install
+cx maintainer deploy --host <name>
+```
+
+GitHub push는 회고가 하지 않고, 보고에 승인 요청을 남긴다.
+설정 형식과 절차는 [retrospective.md](skills/kp-conductor/references/retrospective.md)의 "maintainer 모드" 절을 따른다.
+
 ## 상태 확인과 제거
 
 `cx status`는 온보딩과 진입 블록 상태를 보여준다.
@@ -188,9 +208,36 @@ cx uninstall
 ```
 
 `cx uninstall`은 진입 블록과 생성된 역할 등록을 제거한다.
+`cx skills off`로 끈 스킬도 다시 켠다.
 개인 상태 폴더는 보존하고 경로를 알려준다.
 
 복사한 스킬 폴더의 삭제는 별도로 선택한다.
+
+## 버전과 업데이트
+
+설치한 버전은 `cx --version`으로 확인한다.
+버전별 변경은 [CHANGELOG.md](CHANGELOG.md)와 [릴리스 목록](https://github.com/project820/kp-conductor/releases)에 있다.
+버전 규칙은 [RELEASING.md](RELEASING.md)를 따른다.
+
+새 버전으로 바꿀 때는 설치한 엔진 폴더를 백업한 뒤 다시 복사한다.
+개인 설정(`<state>/local/`)은 그대로 남는다.
+
+```sh
+cd kp-conductor
+git pull
+backup=~/.codex/kp-conductor/backups/engine-$(date +%Y%m%d-%H%M%S)
+mkdir -p "$backup"
+mv ~/.codex/skills/kp-conductor ~/.codex/skills/kp-conductor-onboard "$backup"/
+cp -R skills/kp-conductor ~/.codex/skills/kp-conductor
+cp -R skills/kp-conductor-onboard ~/.codex/skills/kp-conductor-onboard
+cx status
+```
+
+`cx status`에 `entry: outdated`가 나오면 `cx entry install`을 실행한다.
+그다음 `cx doctor`로 확인한다.
+
+릴리스 노트에 Korean Protocol 갱신이 있을 때만 `korean-protocol` 폴더도 같은 방법으로 바꾼다.
+`~/.agents/skills/korean-protocol`에 따로 설치한 KP는 그 저장소의 방법으로 갱신한다.
 
 ## 권장 도구
 

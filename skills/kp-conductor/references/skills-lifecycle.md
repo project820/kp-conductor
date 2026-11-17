@@ -81,6 +81,10 @@ cx-review는 기존 스킬의 고유 기능을 확인한다. 사용자 직접 �
 
 회고는 개인 설정만 고친다. config.toml 변경과 외부 스킬 설치·교체는 회고에서 제안만 남긴다. 아래 적용은 별도 스킬 관리 작업으로 수행한다.
 
+maintainer 모드의 `retro.apply=notify`에는 예외가 있다. 회고가 도태와 금지 목록의 스킬을 바로 끈다. 절차는 [retrospective.md](retrospective.md)의 "스킬 끄기"다.
+
+교체는 maintainer 모드에서도 아래 승인 절차를 따른다.
+
 `cx backup`은 엔진 폴더와 Conductor 소유 단위를 보존한다.
 소유 단위에는 개인 설정 파일과 생성 역할 파일이 들어간다.
 Conductor 소유 역할 등록과 진입 블록도 들어간다.
@@ -92,17 +96,26 @@ Conductor 소유 역할 등록과 진입 블록도 들어간다.
 금지 목록은 `settings.json`의 `banned_skills`를 뜻한다.
 
 1. `cx backup`을 실행한다.
-2. `~/.codex/config.toml`에 아래 항목을 추가한다. 파일은 지우지 않는다.
+2. `cx skills off <이름 또는 SKILL.md 경로>`를 실행한다. 스킬 파일은 지우지 않는다.
+
+이 명령은 `~/.codex/config.toml` 끝의 Conductor 전용 구역에 아래 항목을 쓴다.
+구역 밖의 설정은 바꾸지 않는다.
 
 ```toml
+# conductor:skills:begin v1
 [[skills.config]]
 path = "<SKILL.md 경로>"
 enabled = false
+# conductor:skills:end
 ```
 
+이름에 사본이 둘 이상이면 명령이 멈춘다. 그때는 SKILL.md 경로를 넘긴다.
+`cx skills list`는 Conductor가 끈 스킬을 보여준다.
+
 되돌리기 전에도 `cx backup`을 실행한다.
-백업의 `config.toml` 사본과 현재 파일을 비교한다.
-추가한 항목만 제거하고 다른 설정은 보존한다.
+되돌리는 명령은 `cx skills on <같은 대상>`이다.
+
+구역 밖에서 꺼진 스킬에 `cx skills on`을 하면 명령이 거절한다. 그 항목은 사용자가 직접 고친다.
 
 **교체:** 마지막 전환 전에 사용자 한 줄 승인을 받는다. 설치된 지시와 스크립트의 권한을 먼저 검토한다.
 

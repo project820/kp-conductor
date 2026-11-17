@@ -46,6 +46,14 @@ def state():
     return Path(os.environ.get('CONDUCTOR_HOME') or user_home() / '.codex' / 'kp-conductor')
 
 
+def engine_version():
+    # VERSION sits beside SKILL.md and is installed with the engine (RELEASING.md).
+    try:
+        return (Path(__file__).resolve().parent.parent / 'VERSION').read_text(encoding='utf-8').strip() or 'unknown'
+    except OSError:
+        return 'unknown'
+
+
 # The entry skill never evaluates or hands itself to subagents; onboarding is also engine-owned.
 ENGINE_SKILL = 'kp-conductor'
 ENGINE_SKILLS = (ENGINE_SKILL, 'kp-conductor-onboard')
@@ -315,6 +323,15 @@ def validate_settings(data):
             current = parents[current]
     if data.get('onboarding') is not None and not isinstance(data['onboarding'], dict):
         raise SystemExit('invalid settings onboarding')
+    maintainer = data.get('maintainer')
+    if maintainer is not None:
+        hosts = maintainer.get('hosts', []) if isinstance(maintainer, dict) else None
+        if (not isinstance(maintainer, dict) or not isinstance(maintainer.get('repo'), str) or not maintainer['repo']
+                or not isinstance(maintainer.get('branch', 'main'), str) or not maintainer.get('branch', 'main')
+                or not isinstance(hosts, list)
+                or not all(isinstance(row, dict) and all(isinstance(row.get(k), str) and row[k] for k in ('name', 'ssh'))
+                           for row in hosts)):
+            raise SystemExit('invalid settings maintainer')
     return data
 
 
@@ -1601,16 +1618,21 @@ def config_declarations(config):
 
 
 def roles_marker_spans(config):
+    return region_marker_spans(config, ROLES_BEGIN, ROLES_END, 'roles')
+
+
+def region_marker_spans(config, begin, finish, label):
     markers = []
+    begins = (begin, begin + ' +newline') if label == 'skills' else (begin,)
     for kind, text, start, end in toml_tokens(config):
-        if kind == 'comment' and text.rstrip('\r') in (ROLES_BEGIN, ROLES_END):
+        if kind == 'comment' and text.rstrip('\r') in begins + (finish,):
             line_start = config.rfind('\n', 0, start) + 1
             if not config[line_start:start].strip():
                 markers.append((text.rstrip('\r'), line_start, end + (end < len(config))))
     if not markers:
         return []
-    if len(markers) != 2 or [m[0] for m in markers] != [ROLES_BEGIN, ROLES_END]:
-        raise SystemExit('malformed conductor roles region')
+    if len(markers) != 2 or markers[0][0] not in begins or markers[1][0] != finish:
+        raise SystemExit('malformed conductor %s region' % label)
     return [(start, end) for _, start, end in markers]
 
 
@@ -2646,6 +2668,8 @@ def command_uninstall(args):
     expected = file_hash(config)
     text = config.read_bytes().decode('utf-8') if config.exists() else ''
     updated = unregister_roles(text, set(owned_registrations(text, require_file=True)))
+    # Skills turned off by cx skills off come back on with the uninstall.
+    updated = skills_region_candidate(updated, set())
     if not args.dry_run:
         role_hashes = {path: file_hash(path) for path in generated}
         with change_units({'config.toml': config, 'AGENTS.md': home / '.codex/AGENTS.md'}):
@@ -2655,6 +2679,375 @@ def command_uninstall(args):
             for path in generated:
                 atomic_remove(path, role_hashes[path])
     print('uninstall%s: generated roles %d; retained state: %s' % (' dry-run' if args.dry_run else '', len(generated), state()))
+
+
+# ---- skills off/on (owned [[skills.config]] region) -------------------------
+
+SKILLS_BEGIN = '# conductor:skills:begin v1'
+SKILLS_END = '# conductor:skills:end'
+
+
+def skills_config_blocks(config):
+    blocks = []
+    for tokens, start, end in config_statements(config):
+        if tokens[0][0] == '[':
+            array = len(tokens) > 1 and tokens[1][0] == '['
+            key = toml_key(tokens[2:-2] if array else tokens[1:-1])
+            blocks.append([start, end, array and key == ('skills', 'config')])
+        elif blocks:
+            blocks[-1][1] = end
+    return [(start, end, config[start:end]) for start, end, wanted in blocks if wanted]
+
+
+def owned_skill_offs(config):
+    """Region markers and the exact entries cx skills off writes inside them: path plus enabled = false."""
+    spans = region_marker_spans(config, SKILLS_BEGIN, SKILLS_END, 'skills')
+    if not spans:
+        return [], []
+    rows = []
+    for start, end, text in skills_config_blocks(config):
+        if not spans[0][0] <= start < end <= spans[1][1]:
+            continue
+        found = dict(config_declarations(text))
+        enabled, value = found.get(('skills', 'config', 'enabled')), found.get(('skills', 'config', 'path'))
+        if (set(found) == {('skills', 'config'), ('skills', 'config', 'path'), ('skills', 'config', 'enabled')}
+                and enabled and enabled[0][1] == 'false' and value and value[0][0] == 'string'):
+            rows.append((start, end, toml_string(value[0][1])))
+    return spans, rows
+
+
+def skills_region_candidate(config, paths):
+    spans, rows = owned_skill_offs(config)
+    if not spans and not paths:
+        return config
+    newline = '\r\n' if '\r\n' in config else '\n'
+    added_newline = bool(spans and config[spans[0][0]:spans[0][1]].rstrip('\r\n') == SKILLS_BEGIN + ' +newline')
+    edits = [(start, end, '') for start, end in spans] + [(start, end, '') for start, end, _ in rows]
+    if added_newline:
+        start, end, _ = edits[0]
+        edits[0] = (start - len(newline), end, '')
+    rest = apply_edits(config, edits)
+    if paths:
+        body = ''.join('[[skills.config]]%spath = %s%senabled = false%s' % (newline, json.dumps(item, ensure_ascii=False), newline, newline)
+                       for item in sorted(paths))
+        needs_newline = bool(rest and not rest.endswith('\n'))
+        begin = SKILLS_BEGIN + (' +newline' if needs_newline else '')
+        rest += (newline if needs_newline else '') + begin + newline + body + SKILLS_END + newline
+    def outside(text):
+        marks, owned = owned_skill_offs(text)
+        stripped = apply_edits(text, [(s, e, '') for s, e in marks] + [(s, e, '') for s, e, _ in owned])
+        return [(path, None if tokens is None else [token[:2] for token in tokens]) for path, tokens in config_declarations(stripped)]
+    if outside(config) != outside(rest):
+        raise SystemExit('refusing to change config.toml outside the conductor skills region')
+    if tomllib is not None:
+        try:
+            tomllib.loads(rest)
+        except (ValueError, TypeError) as error:
+            raise SystemExit('invalid config.toml: ' + str(error))
+    return rest
+
+
+def resolve_skill_target(home, value):
+    if value.endswith('SKILL.md') or '/' in value:
+        return str(Path(os.path.expanduser(value)).absolute())
+    found = sorted({path for name, path in role_skills(home) if name == value or name.split(':')[-1] == value})
+    if not found:
+        raise SystemExit('skill not found: ' + value)
+    if len(found) > 1:
+        raise SystemExit('several copies; pass one SKILL.md path:\n' + '\n'.join(found))
+    return str(Path(found[0]))
+
+
+def command_skills(args):
+    home = user_home()
+    path = user_file(home / '.codex/config.toml')
+    expected = file_hash(path)
+    text = path.read_bytes().decode('utf-8') if path.exists() else ''
+    ours = {row[2] for row in owned_skill_offs(text)[1]}
+    if args.action == 'list':
+        print('\n'.join('off: ' + item for item in sorted(ours)) or 'off: none')
+        return
+    if not args.target:
+        raise SystemExit('skills %s requires a skill name or SKILL.md path' % args.action)
+    target = resolve_skill_target(home, args.target)
+    _, disabled_paths = disabled_skills(home)
+    resolved = str(Path(target).resolve())
+    matching = {item for item in ours if str(Path(item).resolve()) == resolved}
+    elsewhere = resolved in disabled_paths and not matching
+    if args.action == 'off':
+        if matching or elsewhere:
+            print('변경 없음: 이미 꺼져 있다: ' + target)
+            return
+        updated = skills_region_candidate(text, ours | {target})
+    else:
+        if elsewhere:
+            raise SystemExit('turned off outside the conductor region; edit config.toml by hand: ' + target)
+        if not matching:
+            print('변경 없음: 꺼져 있지 않다: ' + target)
+            return
+        updated = skills_region_candidate(text, ours - matching)
+    if args.dry_run:
+        print('skills %s dry-run: %s' % (args.action, target))
+        return
+    with change_units({'config.toml': path}):
+        atomic_write(path, updated, expected)
+    print('skills %s: %s' % (args.action, target))
+
+
+# ---- maintainer: install and deploy the engine from a local checkout -------
+
+ENGINE_FOLDERS = ('kp-conductor', 'kp-conductor-onboard')
+
+
+def maintainer_settings():
+    data = load_settings().get('maintainer')
+    if not data:
+        raise SystemExit('settings.maintainer is not set')
+    return Path(os.path.expanduser(data['repo'])), data.get('hosts', [])
+
+
+def repo_state(repo):
+    head = run(['git', '-C', str(repo), 'rev-parse', 'HEAD'])
+    dirty = run(['git', '-C', str(repo), 'status', '--porcelain'])
+    if head is None or dirty is None:
+        raise SystemExit('not a git checkout: ' + str(repo))
+    return head.strip(), dirty.strip()
+
+
+def repo_tests(repo):
+    with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as conductor:
+        env = dict(os.environ, HOME=home, CONDUCTOR_HOME=conductor)
+        result = subprocess.run([sys.executable, '-B', '-m', 'unittest', 'discover', '-s', 'tests'], cwd=str(repo),
+                                env=env, capture_output=True, text=True, timeout=1800)
+    lines = (result.stderr or result.stdout or '').strip().splitlines()
+    return result.returncode == 0, ' '.join(line for line in lines[-3:] if line.strip())
+
+
+def export_head(repo, head, target):
+    import tarfile
+    result = subprocess.run(['git', '-C', str(repo), 'archive', head], capture_output=True, timeout=120)
+    if result.returncode != 0:
+        raise SystemExit('git archive failed: ' + (result.stderr or b'').decode('utf-8', errors='replace')[-300:])
+    target = Path(target)
+    target.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(result.stdout), mode='r:') as archive:
+        options = {'filter': 'data'} if sys.version_info >= (3, 12) else {}
+        archive.extractall(str(target), **options)
+    return target
+
+
+def rollback_engine(folders, backup, done):
+    skills = owned_path(user_home() / '.codex' / 'skills')
+    failed = []
+    for name in folders:
+        # Keep restoring the other folders when one of them fails, then report every failure.
+        try:
+            target, saved = owned_path(skills / name), backup / name
+            if name in done and target.exists():
+                os.rename(str(target), str(backup / ('new-' + name)))
+            if saved.exists() and not target.exists():
+                os.rename(str(saved), str(target))
+        except (OSError, SystemExit) as error:
+            failed.append('%s (%s)' % (name, error))
+    if failed:
+        print('FAIL engine rollback incomplete, copies stay in %s: %s' % (backup, '; '.join(failed)))
+    return failed
+
+
+def install_engine(source_root, folders, stamp):
+    skills = owned_path(user_home() / '.codex' / 'skills')
+    # Validate every destination before moving any old folder, including dangling links.
+    for name in folders:
+        owned_path(skills / name)
+    skills.mkdir(parents=True, exist_ok=True)
+    backup = owned_path(state() / 'backups' / ('engine-' + stamp))
+    backup.mkdir(parents=True, mode=0o700)
+    done = []
+    try:
+        for name in folders:
+            source = source_root / name
+            if not source.is_dir():
+                raise SystemExit('missing in repository: ' + str(source))
+            target = owned_path(skills / name)
+            staging = owned_path(skills / ('.%s-%s' % (name, stamp)))
+            shutil.copytree(str(source), str(staging), ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            if target.exists():
+                os.rename(str(target), str(backup / name))
+            os.rename(str(staging), str(target))
+            done.append(name)
+    except BaseException:
+        rollback_engine(folders, backup, done)
+        for leftover in skills.glob('.*-' + stamp):
+            shutil.rmtree(str(leftover), ignore_errors=True)
+        raise
+    return backup
+
+
+def engine_command(*arguments):
+    script = user_home() / '.codex/skills/kp-conductor/scripts/conductor.py'
+    command = [sys.executable, str(script), '--home', str(user_home())] + list(arguments)
+    if arguments == ('entry', 'install'):
+        # The parent receive holds the mutation lock. Run the installed entry handler
+        # in a subprocess without taking that same lock a second time.
+        loader = ("import argparse, pathlib, runpy, sys; "
+                  "engine = runpy.run_path(sys.argv[1]); "
+                  "handler = engine['command_entry']; "
+                  "handler.__globals__['HOME_OVERRIDE'] = pathlib.Path(sys.argv[3]); "
+                  "handler(argparse.Namespace(action='install', dry_run=False))")
+        command = [sys.executable, '-c', loader] + command[1:]
+    return subprocess.run(command, env=dict(os.environ, HOME=str(user_home())),
+                          capture_output=True, text=True, timeout=120)
+
+
+def receive_engine(source_root, stamp, commit=None):
+    source_root = Path(source_root)
+    folders = list(ENGINE_FOLDERS) + ([] if (user_home() / '.agents/skills/korean-protocol').exists() else ['korean-protocol'])
+    record = owned_path(state() / 'engine.json')
+    expected = file_hash(record)
+    installed = read_json(record, {}) if record.exists() else {}
+    installed = installed if isinstance(installed, dict) else {}
+    # Read everything a rollback needs before the first folder moves.
+    agents = user_file(user_home() / '.codex/AGENTS.md')
+    try:
+        agents_before = agents.read_bytes() if agents.exists() else None
+    except OSError as error:
+        raise SystemExit('cannot read AGENTS.md before install, nothing changed: %s' % error)
+    backup = install_engine(source_root, folders, stamp)
+    entry_changed = False
+    try:
+        status = engine_command('entry', 'status')
+        if status.returncode != 0:
+            raise SystemExit('entry status failed: ' + (status.stderr or status.stdout or '')[-300:])
+        if 'outdated' in (status.stdout or ''):
+            entry_changed = True
+            entry = engine_command('entry', 'install')
+            if entry.returncode != 0:
+                raise SystemExit('entry install failed: ' + (entry.stderr or entry.stdout or '')[-300:])
+        check = engine_command('doctor')
+        crashed = check.returncode not in (0, 1) or 'Traceback (most recent call last)' in (check.stderr or '')
+        if crashed:
+            print(check.stderr or check.stdout or 'doctor crashed')
+            raise SystemExit('doctor did not finish: ' + (check.stderr or check.stdout or '')[-300:])
+        if check.returncode != 0:
+            failures = '\n'.join(line for line in (check.stdout or '').splitlines() if line.startswith('FAIL'))
+            labels = set(re.findall(r'^FAIL (.+?): ', check.stdout or '', re.M))
+            # ocx and the proxy belong to the machine, as in overlay verify; they do not judge the engine.
+            environment = {'ocx', 'proxy'} | ({'routed models in catalog'} if 'proxy' in labels else set())
+            # A machine that never had the entry block installed is not broken by this install.
+            if 'absent' in (status.stdout or ''):
+                environment.add('AGENTS.md pointer')
+            if not labels or labels - environment:
+                print(failures or check.stderr or check.stdout or 'doctor failed')
+                raise SystemExit(failures or 'doctor failed: ' + (check.stderr or '')[-300:])
+            print('WARN environment checks failed after install, engine kept: ' + ', '.join(sorted(labels)))
+        version_path = source_root / 'kp-conductor/VERSION'
+        version = version_path.read_text(encoding='utf-8').strip() if version_path.exists() else None
+        data = dict(installed, commit=commit, version=version, installed_at=now().isoformat(), folders=folders, backup=str(backup))
+        atomic_write(record, json.dumps(data, ensure_ascii=False, indent=1) + '\n', expected, mode=0o600)
+    except BaseException:
+        rollback_engine(folders, backup, folders)
+        if entry_changed:
+            # Put back the exact AGENTS.md bytes from before this install.
+            try:
+                if agents_before is not None:
+                    atomic_write(agents, agents_before, file_hash(agents))
+            except (OSError, SystemExit) as error:
+                print('FAIL AGENTS.md restore: %s' % str(error)[-300:])
+        raise
+    print('maintainer receive: %s%s; previous copy in %s' % ((commit or 'unknown')[:7], ' v' + version if version else '', backup))
+    return backup
+
+
+def command_maintainer(args):
+    import shlex
+    stamp = now().strftime('%Y%m%d-%H%M%S-%f')
+    if args.action == 'receive':
+        if not args.source:
+            raise SystemExit('maintainer receive requires --source')
+        source = Path(args.source).expanduser()
+        if args.dry_run:
+            print('maintainer receive dry-run: %s -> %s' % (source, user_home() / '.codex/skills'))
+            return
+        try:
+            return receive_engine(source, stamp, args.commit)
+        finally:
+            staging = lexical_path(state() / 'staging')
+            candidate = lexical_path(source)
+            if candidate != staging and staging in candidate.parents and candidate.exists():
+                shutil.rmtree(str(owned_path(candidate)))
+    repo, hosts = maintainer_settings()
+    head, dirty = repo_state(repo)
+    branch = run(['git', '-C', str(repo), 'rev-parse', '--abbrev-ref', 'HEAD'])
+    branch = (branch or '').strip()
+    expected_branch = load_settings()['maintainer'].get('branch', 'main')
+    record = owned_path(state() / 'engine.json')
+    installed = read_json(record, {}) if record.exists() else {}
+    installed = installed if isinstance(installed, dict) else {}
+    if args.action == 'status':
+        print('repo: %s' % repo)
+        print('head: %s%s' % (head[:7], ' (uncommitted changes)' if dirty else ''))
+        print('branch: %s (required: %s)' % (branch, expected_branch))
+        print('installed: %s%s' % ((installed.get('commit') or 'none')[:7], ' v' + installed['version'] if installed.get('version') else ''))
+        for host in hosts:
+            print('host %s (%s): %s' % (host['name'], host['ssh'], ((installed.get('hosts') or {}).get(host['name']) or 'none')[:7]))
+        return
+    if dirty:
+        raise SystemExit('commit the repository changes first: ' + str(repo))
+    if branch != expected_branch:
+        raise SystemExit('branch %s does not match required branch %s' % (branch, expected_branch))
+    if args.action == 'install':
+        if args.dry_run:
+            print('maintainer install dry-run: export %s, test export, receive -> %s' % (head[:7], user_home() / '.codex/skills'))
+            return
+        with tempfile.TemporaryDirectory(prefix='conductor-export-') as temporary:
+            exported = export_head(repo, head, Path(temporary) / 'export')
+            passed, summary = repo_tests(exported)
+            print('tests: %s %s' % ('passed' if passed else 'failed', summary))
+            if not passed:
+                raise SystemExit(1)
+            receive_engine(exported / 'skills', stamp, head)
+        return
+    host = next((row for row in hosts if row['name'] == args.host), None)
+    if host is None:
+        raise SystemExit('unknown host: %s' % args.host)
+    if installed.get('commit') != head:
+        raise SystemExit('install this commit here first: cx maintainer install')
+    remote_relative = '.codex/kp-conductor/staging/engine-' + stamp
+    remote = '~/' + shlex.quote(remote_relative)
+    def commands(exported):
+        return [
+            ('staging', ['ssh', host['ssh'], 'mkdir -p ' + remote]),
+            ('rsync', ['rsync', '-a', '--exclude', '__pycache__', str(exported / 'skills') + '/',
+                       '%s:%s/' % (shlex.quote(host['ssh']), shlex.quote(remote_relative))]),
+            ('receive', ['ssh', host['ssh'], 'python3 %s/kp-conductor/scripts/conductor.py maintainer receive --source %s --commit %s'
+                         % (remote, remote, shlex.quote(head))]),
+        ]
+    if args.dry_run:
+        print('\n'.join(shlex.join(command) for _, command in commands(Path('<export>'))))
+        return
+    with tempfile.TemporaryDirectory(prefix='conductor-export-') as temporary:
+        try:
+            exported = export_head(repo, head, Path(temporary) / 'export')
+        except (OSError, subprocess.TimeoutExpired, SystemExit) as error:
+            raise SystemExit('deploy failed at export: ' + str(error)[-300:])
+        for stage, command in commands(exported):
+            try:
+                result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                detail = getattr(error, 'stderr', None) or str(error)
+                if isinstance(detail, bytes):
+                    detail = detail.decode('utf-8', errors='replace')
+                raise SystemExit('deploy failed at %s: %s' % (stage, detail.strip()[-300:]))
+            if result.returncode != 0:
+                raise SystemExit('deploy failed at %s: %s' % (stage, (result.stderr or '').strip()[-300:]))
+            if stage == 'receive':
+                # Pass on the remote warnings (environment checks, absent entry block) for the report.
+                remote = '\n'.join(line for line in (result.stdout or '').splitlines() if line.startswith(('WARN', 'FAIL', 'maintainer receive')))
+                if remote:
+                    print('remote: ' + remote.replace('\n', '\nremote: '))
+    data = dict(installed, hosts=dict(installed.get('hosts') or {}, **{host['name']: head}))
+    atomic_write(record, json.dumps(data, ensure_ascii=False, indent=1) + '\n', file_hash(record), mode=0o600)
+    print('maintainer deploy: %s to %s' % (head[:7], host['name']))
 
 
 # ---- lineup and Artificial Analysis ---------------------------------------
@@ -2930,6 +3323,7 @@ def command_doctor(args):
             problems.append(label)
         print('%s %s: %s' % ('OK  ' if ok else 'FAIL', label, detail))
 
+    check(True, 'engine', engine_version())
     try:
         settings = load_settings()
         check(True, 'settings.json', 'valid')
@@ -3038,6 +3432,7 @@ def main(argv=None):
     home_parser.add_argument('--home')
     home_args, raw = home_parser.parse_known_args(raw)
     parser = argparse.ArgumentParser(prog='cx')
+    parser.add_argument('--version', action='version', version='cx (kp-conductor) ' + engine_version())
     sub = parser.add_subparsers(dest='command', required=True)
     status = sub.add_parser('status')
     status.add_argument('--project', default=os.getcwd())
@@ -3137,6 +3532,18 @@ def main(argv=None):
     config_parser.add_argument('action', choices=('convert-agents',))
     config_parser.add_argument('--dry-run', action='store_true')
     config_parser.set_defaults(handler=command_config)
+    skills_parser = sub.add_parser('skills')
+    skills_parser.add_argument('action', choices=('off', 'on', 'list'))
+    skills_parser.add_argument('target', nargs='?')
+    skills_parser.add_argument('--dry-run', action='store_true')
+    skills_parser.set_defaults(handler=command_skills)
+    maintainer_parser = sub.add_parser('maintainer')
+    maintainer_parser.add_argument('action', choices=('status', 'install', 'deploy', 'receive'))
+    maintainer_parser.add_argument('--source')
+    maintainer_parser.add_argument('--commit')
+    maintainer_parser.add_argument('--host')
+    maintainer_parser.add_argument('--dry-run', action='store_true')
+    maintainer_parser.set_defaults(handler=command_maintainer)
     args = parser.parse_args(raw)
     args.home = home_args.home
     previous = HOME_OVERRIDE
@@ -3146,6 +3553,8 @@ def main(argv=None):
                     or (args.command == 'entry' and args.action in ('install', 'remove'))
                     or (args.command == 'overlay' and args.action in ('backup', 'restore', 'verify'))
                     or (args.command == 'settings' and args.action == 'set')
+                    or (args.command == 'skills' and args.action in ('off', 'on'))
+                    or (args.command == 'maintainer' and args.action in ('install', 'deploy', 'receive'))
                     or args.command in ('roles', 'uninstall', 'backup', 'config')) and not getattr(args, 'dry_run', False)
         if args.command == 'entry' and args.action == 'install':
             entry_source()

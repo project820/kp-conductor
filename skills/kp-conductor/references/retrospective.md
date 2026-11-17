@@ -2,12 +2,16 @@
 
 회고는 `<state>/local/`의 개인 설정만 고친다. 설치된 엔진의 SKILL.md·references·scripts는 고치지 않는다. `<state>`는 `CONDUCTOR_HOME`, 없으면 `~/.codex/kp-conductor`다.
 
+예외는 `settings.json`에 `maintainer`가 있는 경우다. 이때는 아래 "maintainer 모드" 절도 따른다.
+
 ```mermaid
 flowchart TD
   A["예약 작업"] --> C["회고 분석"]
   B["세션 요청 종료"] -->|"retro: due"| C
   C --> D{"변경 대상"}
-  D -->|"엔진 문제"| E["upstream 제안 파일"]
+  D -->|"엔진 문제"| M{"maintainer와 notify"}
+  M -->|"아니다"| E["upstream 제안 파일"]
+  M -->|"그렇다"| N["로컬 저장소 반영"]
   D -->|"개인 설정"| F{"retro.apply"}
   F -->|"propose"| G["제안 파일"]
   F -->|"notify"| H["변경 권한 확인"]
@@ -63,7 +67,9 @@ flowchart TD
 
 `cx profile set`을 포함한 직접 적용은 하지 않는다.
 
-`retro.apply=notify`이면 아래 권한표를 따른다. 엔진 문제는 설정과 무관하게 `<state>/proposals/upstream-<날짜>.md`에 적는다. 외부로 보내지 않으며 공개 저장소 반영은 사람이 고른다.
+`retro.apply=notify`이면 아래 권한표를 따른다. 엔진 문제는 `<state>/proposals/upstream-<날짜>.md`에 적는다. 외부로 보내지 않으며 공개 저장소 반영은 사람이 고른다.
+
+예외는 아래 "maintainer 모드" 절이다.
 
 | 개인 설정 변경 | 근거 | 권한 |
 |---|---|---|
@@ -78,7 +84,7 @@ flowchart TD
 
 병렬 폭과 경쟁 조건은 엔진 규칙이다. 승격 순서와 모드 진입 조건도 엔진 규칙이다. 비주얼 기준도 포함한다.
 
-검증 하한을 포함한 절차 변경은 승인 대상 upstream 제안으로만 남긴다. 스킬 수명 주기 작업도 이 회고에서는 제안만 남긴다.
+검증 하한을 포함한 절차 변경은 승인 대상 upstream 제안으로만 남긴다. 스킬 수명 주기 작업도 이 회고에서는 제안만 남긴다. maintainer 모드의 예외는 아래 절을 따른다.
 
 ### 적용과 복구
 
@@ -91,6 +97,77 @@ flowchart TD
 5. 경로·배정을 바꿨으면 [regression.md](regression.md)의 시범 요청을 새 세션에서 실행한다.
 
 한 회고에서 역할 배정은 한 행만 바꾼다. 여러 행을 바꾸면 효과의 원인을 가리기 어렵다. 회고 보고·영수증·프로필은 `<state>/`의 기록으로 남기고 공개 저장소에는 넣지 않는다.
+
+## maintainer 모드
+
+엔진 저장소를 직접 관리하는 사람의 설정이다. `settings.json`에 아래처럼 적는다.
+
+```json
+"maintainer": {"repo": "~/src/kp-conductor", "branch": "main", "hosts": [{"name": "laptop", "ssh": "laptop"}]}
+```
+
+`repo`는 엔진 저장소의 로컬 복제본이다. `branch`는 설치할 브랜치이고 기본값은 `main`이다. `hosts`는 엔진을 함께 쓰는 원격 컴퓨터이고, `ssh`에는 SSH 접속 이름을 적는다.
+
+`maintainer` 등록은 이 컴퓨터 설치와 `hosts` 배포에 대한 사용자의 상시 승인이다. 이 승인이 SKILL.md R3의 "실행 전 사용자 승인"을 대신한다. 테스트와 독립 검토 2회는 줄이지 않는다.
+
+이 절의 적용은 `retro.apply=notify`일 때만 한다. `propose`이면 엔진 변경과 스킬 끄기를 모두 `<state>/proposals/<날짜>.md`에 제안으로만 남긴다.
+
+### 엔진 변경
+
+엔진 문제는 upstream 제안 파일 대신 로컬 저장소에 반영한다.
+
+| 엔진 변경 | 권한 |
+|---|---|
+| 코드 결함 수정 | 알리고 적용한다 |
+| 기본 틀 자료 갱신(경로 범주, 등급표, 권장 목록) | 알리고 적용한다 |
+| 분류·배정 규칙 문구의 빈틈 보완 | 알리고 적용한다 |
+| 검증 하한, 위험도, 승인 절차 변경 | 사용자 한 줄 승인을 받는다 |
+| 이 권한표와 maintainer 절차 변경 | 사용자 한 줄 승인을 받는다 |
+| 안전 장치 코드 변경 | 사용자 한 줄 승인을 받는다 |
+| GitHub push | 회고는 push하지 않는다. 보고에 승인 요청을 남긴다 |
+
+안전 장치는 아래 코드를 뜻한다.
+
+- 백업과 복구
+- 파일 잠금
+- 소유 경로 검사
+- 설치·배포 명령
+
+1. `cx maintainer status`를 실행한다. 아래 경우에는 멈추고 알린다.
+   - `uncommitted changes`가 보인다.
+   - `branch`가 설정과 다르다.
+   - `head`와 `installed`의 커밋이 다르다. 회고 밖에서 만든 커밋이 섞인다.
+2. 저장소의 엔진 파일을 고친다. 바뀐 동작에는 테스트를 추가한다.
+3. 전체 테스트를 실행한다. 실패하면 커밋하지 않고 제안 파일에 남긴다.
+4. SKILL.md나 references의 규칙 문구를 바꿨으면 [regression.md](regression.md)의 시범 요청을 임시 홈에서 실행한다. 기대 동작과 다르면 커밋하지 않는다.
+5. 저장소의 `RELEASING.md`에 따라 `VERSION`과 `CHANGELOG.md`를 고친다. push하지 않은 버전 절이 맨 위에 있으면 그 절에 덧붙인다.
+6. 작성하지 않은 모델에게 독립 검토를 2회 받고 지적을 고친다. 검토자를 확보하지 못하면 커밋하지 않고 제안 파일에 남긴다.
+7. 로컬 커밋을 만든다. 메시지에 회고 날짜를 적는다.
+8. `cx maintainer install`을 실행한다.
+9. `hosts`의 컴퓨터마다 `cx maintainer deploy --host <name>`을 실행한다.
+10. 보고에 커밋과 버전을 적는다. 설치와 배포 결과도 적는다. push 승인 요청을 함께 적는다.
+
+`install`은 HEAD 커밋의 파일만 꺼내 테스트한 뒤 설치한다. 이전 엔진은 `<state>/backups/engine-<시각>`에 남는다. 진입 블록이 낡았으면 새로 넣는다.
+
+설치 뒤 doctor가 실패하면 이전 엔진과 진입 블록으로 되돌린다. 이때 명령은 실패로 끝나고 기록을 바꾸지 않는다.
+
+ocx나 프록시 같은 환경 검사만 실패하면 엔진을 유지하고 경고만 낸다. 그 경고는 보고에 적는다.
+
+진입 블록이 아예 없는 컴퓨터도 같다. 첫 배포에서는 `AGENTS.md pointer` 실패를 경고로 둔다. 그 컴퓨터에서 `cx entry install`을 실행할지는 사용자에게 묻는다.
+
+`deploy`는 같은 파일을 원격의 임시 폴더로 보낸다. 그다음 원격에서 같은 설치를 실행한다. 원격에서 실패하면 이전 엔진으로 되돌리고 그 컴퓨터를 기록하지 않는다.
+
+원격에 `~/.agents/skills/korean-protocol`이 있으면 KP 사본은 설치하지 않는다. 이 컴퓨터의 `install`도 같다.
+
+### 스킬 끄기
+
+`retro.apply=notify`이면 회고가 도태한 스킬과 금지 목록의 스킬을 바로 끈다. 금지 목록은 `settings.json`의 `banned_skills`다.
+
+1. `cx backup`을 실행한다.
+2. `cx skills off <이름 또는 SKILL.md 경로>`를 실행한다.
+3. 보고에 끈 스킬과 근거를 적는다. 되돌리는 명령은 `cx skills on <같은 대상>`이다.
+
+`cx skills`는 config.toml의 Conductor 전용 구역만 고친다. 구역 밖에서 이미 꺼진 스킬은 바꾸지 않는다.
 
 ## 신규 모델 반영
 

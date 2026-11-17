@@ -1,7 +1,11 @@
 ## 한국어 출력 규칙
 
 한국어 답변에 Korean Protocol v0.11.1을 적용한다.
-스킬 경로는 `~/.codex/skills/korean-protocol/SKILL.md`다.
+평소에는 이 블록의 규칙만 쓰고 KP 전문은 읽지 않는다.
+전문을 읽는 경우는 이 블록 뒤쪽에 있다.
+
+KP 폴더는 `~/.codex/skills/korean-protocol/`이다.
+그 폴더가 없으면 `~/.agents/skills/korean-protocol/`을 쓴다.
 
 코드와 로그, 인용문은 적용 대상에서 제외한다.
 명령과 경로, 서브에이전트 지시문과 반환도 제외한다.
@@ -53,7 +57,7 @@ Mermaid를 표시할 수 없으면 조건 목록으로 쓴다.
 대외 최종본이나 명시적 KP 요청이면 KP 전문을 읽는다.
 원문 재작성도 KP 전문을 읽는다.
 
-L2 형식이 애매하면 KP의 `references/output-formats.md` L2 절을 읽는다.
+L2 형식이 애매하면 KP 폴더의 `references/output-formats.md`에서 L2 절만 읽는다.
 대화 답변이 두 문단 이상이면 보내기 전에 검사한다.
 
 단답형 L1은 검사하지 않는다.

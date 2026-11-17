@@ -2659,3 +2659,685 @@ class ReviewRegressionTests(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
+
+class SkillsMaintainerTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix='skills-maintainer-')
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.home = self.root / 'home'
+        self.home.mkdir()
+        self.state = self.root / 'state'
+        self.skill = self.root / 'package'
+        (self.skill / 'references').mkdir(parents=True)
+        (self.skill / 'references/roles.json').write_text('{"roles": {}}')
+        (self.skill / 'references/routing.json').write_text('{"routes": [], "mcp_usage": {}}')
+        for item in (patch.dict(os.environ, {'HOME': str(self.home), 'CONDUCTOR_HOME': str(self.state)}),
+                     patch.object(cx, 'SKILL', self.skill)):
+            item.start()
+            self.addCleanup(item.stop)
+        self.real_process = cx.subprocess.run
+        process = patch.object(cx.subprocess, 'run')
+        self.process = process.start()
+        self.addCleanup(process.stop)
+        self.process.side_effect = AssertionError('external commands must be mocked explicitly')
+        self.config = self.home / '.codex/config.toml'
+        self.config.parent.mkdir(parents=True)
+        self.skills = self.home / '.codex/skills'
+        self.repo = self.root / 'checkout'
+        self.head = 'a' * 40
+        self.dirty = ''
+        self.branch = 'main'
+        runner = patch.object(cx, 'run', side_effect=self.git_output)
+        runner.start()
+        self.addCleanup(runner.stop)
+        tests = patch.object(cx, 'repo_tests', return_value=(True, 'fixture tests passed'))
+        self.repo_tests = tests.start()
+        self.addCleanup(tests.stop)
+
+    def git_output(self, command, **kwargs):
+        if command == ['git', '-C', str(self.repo), 'rev-parse', 'HEAD']:
+            return self.head + '\n'
+        if command == ['git', '-C', str(self.repo), 'rev-parse', '--abbrev-ref', 'HEAD']:
+            return self.branch + '\n'
+        if command == ['git', '-C', str(self.repo), 'status', '--porcelain']:
+            return self.dirty
+        raise AssertionError('unexpected command: %r' % command)
+
+    def cli(self, *arguments):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            cx.main(['--home', str(self.home)] + list(arguments))
+        return output.getvalue()
+
+    def skill_file(self, name, root='.agents/skills'):
+        path = self.home / root / name / 'SKILL.md'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('# ' + name + '\n')
+        return path
+
+    def user_config(self, newline='\n'):
+        user = self.skill_file('user-disabled')
+        text = ('# user settings\nmodel = "keep"\n\n[[skills.config]] # user entry\n'
+                'path = %s\nenabled = false # user decision\n\n'
+                '[tools]\nmode = "keep" # trailing comment\n') % json.dumps(str(user))
+        content = text.replace('\n', newline).encode()
+        self.config.write_bytes(content)
+        return user, content
+
+    def export_fixture(self, repo, head, target):
+        self.assertEqual((repo, head), (self.repo, self.head))
+        cx.shutil.copytree(repo, target, dirs_exist_ok=True)
+        return target
+
+    def repository(self):
+        for name in ('kp-conductor', 'kp-conductor-onboard', 'korean-protocol'):
+            folder = self.repo / 'skills' / name
+            (folder / '__pycache__').mkdir(parents=True)
+            (folder / 'SKILL.md').write_text('new ' + name)
+            (folder / '__pycache__/cached.pyc').write_bytes(b'cache')
+            (folder / 'module.pyc').write_bytes(b'cache')
+        (self.repo / 'skills/kp-conductor/VERSION').write_text('9.8.7\n')
+        self.export_patch = patch.object(cx, 'export_head', side_effect=self.export_fixture, create=True)
+        self.export = self.export_patch.start()
+        self.addCleanup(self.export_patch.stop)
+        self.process.side_effect = None
+        self.process.return_value = self.deploy_result(stdout='entry: present\n')
+        settings = self.state / 'local/settings.json'
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({'maintainer': {'repo': str(self.repo),
+                            'hosts': [{'name': 'lab', 'ssh': 'fixture-host'}]}}))
+
+    def engine_record(self, commit=None):
+        self.state.mkdir(parents=True, exist_ok=True)
+        record = self.state / 'engine.json'
+        record.write_text(json.dumps({'commit': commit or self.head, 'hosts': {}}))
+        return record
+
+    def snapshot(self, directory):
+        return {str(path.relative_to(directory)): path.read_bytes()
+                for path in directory.rglob('*') if path.is_file()} if directory.exists() else {}
+
+    def test_skills_off_accumulates_and_last_on_removes_region(self):
+        _, original = self.user_config()
+        first, second = self.skill_file('first'), self.skill_file('second')
+        self.cli('skills', 'off', 'first')
+        expected = ('# conductor:skills:begin v1\n[[skills.config]]\npath = %s\nenabled = false\n'
+                    '# conductor:skills:end\n') % json.dumps(str(first))
+        self.assertEqual(self.config.read_bytes(), original + expected.encode())
+        self.cli('skills', 'off', str(second))
+        text = self.config.read_text()
+        self.assertEqual(text.count(cx.SKILLS_BEGIN), 1)
+        self.assertEqual({row[2] for row in cx.owned_skill_offs(text)[1]}, {str(first), str(second)})
+        self.assertTrue(self.config.read_bytes().startswith(original))
+        self.cli('skills', 'on', str(first))
+        self.assertIn(cx.SKILLS_BEGIN, self.config.read_text())
+        self.cli('skills', 'on', 'second')
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_skills_external_off_is_noop_and_on_is_refused(self):
+        user, original = self.user_config()
+        before = self.config.stat().st_mtime_ns
+        self.assertIn('변경 없음', self.cli('skills', 'off', str(user)))
+        with self.assertRaisesRegex(SystemExit, 'outside the conductor region'):
+            self.cli('skills', 'on', str(user))
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(self.config.stat().st_mtime_ns, before)
+
+    def test_skills_resolves_unique_name_and_explicit_path(self):
+        skill = self.skill_file('unique')
+        self.assertEqual(cx.resolve_skill_target(self.home, 'unique'), str(skill))
+        self.assertEqual(cx.resolve_skill_target(self.home, str(skill)), str(skill))
+
+    def test_skills_rejects_duplicate_and_missing_names(self):
+        first = self.skill_file('duplicate')
+        second = self.skill_file('duplicate', root='.codex/skills')
+        with self.assertRaisesRegex(SystemExit, 'several copies') as error:
+            self.cli('skills', 'off', 'duplicate')
+        self.assertIn(str(first), str(error.exception))
+        self.assertIn(str(second), str(error.exception))
+        with self.assertRaisesRegex(SystemExit, 'skill not found'):
+            self.cli('skills', 'off', 'missing')
+        self.assertFalse(self.config.exists())
+
+    def linked_skill(self):
+        target = self.skill_file('actual', root='external')
+        link = self.home / '.agents/skills/linked'
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(target.parent, target_is_directory=True)
+        return link / 'SKILL.md', target
+
+    def test_skills_symlink_off_keeps_readable_path_and_alias_off_is_noop(self):
+        link, target = self.linked_skill()
+        self.cli('skills', 'off', str(link))
+        original = self.config.read_bytes()
+        self.assertIn(json.dumps(str(link)), original.decode())
+        self.assertIn(str(target.resolve()), cx.disabled_skills(self.home)[1])
+        self.assertIn('변경 없음', self.cli('skills', 'off', str(target)))
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_skills_on_via_resolved_symlink_path_removes_owned_entry(self):
+        link, target = self.linked_skill()
+        self.cli('skills', 'off', str(link))
+        self.cli('skills', 'on', str(target))
+        self.assertEqual(self.config.read_bytes(), b'')
+
+    def test_skills_uninstall_removes_only_owned_region(self):
+        _, original = self.user_config()
+        self.skill_file('owned')
+        self.cli('skills', 'off', 'owned')
+        before = self.config.read_bytes()
+        self.cli('uninstall', '--dry-run')
+        self.assertEqual(self.config.read_bytes(), before)
+        self.cli('uninstall')
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_skills_crlf_round_trip_preserves_user_bytes(self):
+        _, original = self.user_config(newline='\r\n')
+        self.skill_file('crlf')
+        self.cli('skills', 'off', 'crlf')
+        changed = self.config.read_bytes()
+        self.assertTrue(changed.startswith(original))
+        self.assertNotIn(b'\n', changed.replace(b'\r\n', b''))
+        self.cli('skills', 'on', 'crlf')
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_skills_off_on_without_tomllib(self):
+        _, original = self.user_config()
+        self.skill_file('fallback')
+        with patch.object(cx, 'tomllib', None):
+            self.cli('skills', 'off', 'fallback')
+            self.assertIn('enabled = false', self.config.read_text())
+            self.cli('skills', 'on', 'fallback')
+        self.assertEqual(self.config.read_bytes(), original)
+
+    def test_skills_dry_run_list_and_repeated_off_preserve_config(self):
+        skill = self.skill_file('dry')
+        self.assertEqual(self.cli('skills', 'list').strip(), 'off: none')
+        self.assertIn('dry-run', self.cli('skills', 'off', 'dry', '--dry-run'))
+        self.assertFalse(self.config.exists())
+        self.cli('skills', 'off', 'dry')
+        original = self.config.read_bytes()
+        before = self.config.stat().st_mtime_ns
+        self.assertEqual(self.cli('skills', 'list').strip(), 'off: ' + str(skill))
+        self.assertIn('변경 없음', self.cli('skills', 'off', 'dry'))
+        self.assertIn('dry-run', self.cli('skills', 'on', 'dry', '--dry-run'))
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(self.config.stat().st_mtime_ns, before)
+
+    def test_maintainer_settings_accept_valid_values(self):
+        for value in ({'repo': str(self.repo)}, {'repo': str(self.repo), 'hosts': []},
+                      {'repo': str(self.repo), 'branch': 'release'},
+                      {'repo': str(self.repo), 'hosts': [{'name': 'lab', 'ssh': 'fixture-host'}]}):
+            with self.subTest(value=value):
+                settings = {'maintainer': value}
+                self.assertEqual(cx.validate_settings(settings), settings)
+
+    def test_maintainer_settings_reject_missing_repo_and_bad_hosts(self):
+        for value in ({'repo': str(self.repo), 'branch': 1}, {'repo': str(self.repo), 'branch': ''}, {}, [], {'repo': ''}, {'repo': 1}, {'hosts': []},
+                      {'repo': str(self.repo), 'hosts': {}},
+                      {'repo': str(self.repo), 'hosts': ['lab']},
+                      {'repo': str(self.repo), 'hosts': [{'name': 'lab'}]},
+                      {'repo': str(self.repo), 'hosts': [{'name': '', 'ssh': 'fixture-host'}]},
+                      {'repo': str(self.repo), 'hosts': [{'name': 'lab', 'ssh': 4}]}):
+            with self.subTest(value=value), self.assertRaisesRegex(SystemExit, 'invalid settings maintainer'):
+                cx.validate_settings({'maintainer': value})
+
+    def test_maintainer_dirty_repo_blocks_install_and_deploy_but_status_works(self):
+        self.repository()
+        self.dirty = ' M skills/kp-conductor/SKILL.md\n'
+        for action in ('install', 'deploy'):
+            with self.subTest(action=action), self.assertRaisesRegex(SystemExit, 'commit the repository changes first'):
+                self.cli('maintainer', action, *(['--host', 'lab'] if action == 'deploy' else []))
+        output = self.cli('maintainer', 'status')
+        self.assertIn('uncommitted changes', output)
+        self.assertIn(self.head[:7], output)
+        self.assertIn('installed: none', output)
+        self.assertIn('host lab (fixture-host): none', output)
+        self.repo_tests.assert_not_called()
+        self.process.assert_not_called()
+        self.assertFalse(self.skills.exists())
+
+    def test_maintainer_failed_repo_tests_leave_installed_skills_unchanged(self):
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        original = self.snapshot(self.skills)
+        self.repo_tests.return_value = (False, 'fixture test failure')
+        with self.assertRaises(SystemExit) as error:
+            self.cli('maintainer', 'install')
+        self.assertEqual(error.exception.code, 1)
+        self.assertEqual(self.repo_tests.call_args.args[0], self.export.call_args.args[2])
+        self.assertNotEqual(self.repo_tests.call_args.args[0], self.repo)
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.assertFalse((self.state / 'engine.json').exists())
+        self.assertFalse((self.state / 'backups').exists())
+
+    def test_maintainer_install_copies_engine_backs_up_and_records_commit(self):
+        self.repository()
+        old = self.skill_file('kp-conductor', root='.codex/skills').read_bytes()
+        self.skill_file('kp-conductor-onboard', root='.codex/skills')
+        self.cli('maintainer', 'install')
+        record = json.loads((self.state / 'engine.json').read_text())
+        self.assertEqual(record['commit'], self.head)
+        self.assertEqual(record['version'], '9.8.7')
+        self.assertEqual(record['folders'], ['kp-conductor', 'kp-conductor-onboard', 'korean-protocol'])
+        backup = Path(record['backup'])
+        self.assertEqual(backup.parent, self.state / 'backups')
+        self.assertTrue(backup.name.startswith('engine-'))
+        self.assertEqual((backup / 'kp-conductor/SKILL.md').read_bytes(), old)
+        self.assertTrue((backup / 'kp-conductor-onboard/SKILL.md').exists())
+        for name in record['folders']:
+            self.assertEqual((self.skills / name / 'SKILL.md').read_text(), 'new ' + name)
+        self.assertFalse(any(path.name == '__pycache__' or path.suffix == '.pyc' for path in self.skills.rglob('*')))
+        self.assertEqual(self.repo_tests.call_args.args[0], self.export.call_args.args[2])
+        self.assertNotEqual(self.repo_tests.call_args.args[0], self.repo)
+
+    def test_maintainer_install_skips_separately_installed_korean_protocol(self):
+        self.repository()
+        protocol = self.skill_file('korean-protocol')
+        original = protocol.read_bytes()
+        self.cli('maintainer', 'install')
+        self.assertFalse((self.skills / 'korean-protocol').exists())
+        self.assertEqual(protocol.read_bytes(), original)
+        record = json.loads((self.state / 'engine.json').read_text())
+        self.assertEqual(record['folders'], ['kp-conductor', 'kp-conductor-onboard'])
+
+    def test_maintainer_install_engine_failure_restores_previous_folders_and_cleans_staging(self):
+        self.repository()
+        folders = ['kp-conductor', 'kp-conductor-onboard']
+        for name in folders:
+            self.skill_file(name, root='.codex/skills')
+        original = self.snapshot(self.skills)
+        copytree = cx.shutil.copytree
+        def fail_second(source, target, *arguments, **options):
+            if Path(source) == self.repo / 'skills/kp-conductor-onboard':
+                Path(target).mkdir()
+                (Path(target) / 'partial').write_text('incomplete')
+                raise OSError('second folder failed')
+            return copytree(source, target, *arguments, **options)
+        with patch.object(cx, 'HOME_OVERRIDE', self.home), patch.object(cx.shutil, 'copytree', side_effect=fail_second):
+            with self.assertRaisesRegex(OSError, 'second folder failed'):
+                cx.install_engine(self.repo / 'skills', folders, 'fixture')
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.assertEqual(sorted(path.name for path in self.skills.iterdir()), sorted(folders))
+
+    def test_maintainer_deploy_dry_run_prints_commands_without_subprocess(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        lines = self.cli('maintainer', 'deploy', '--host', 'lab', '--dry-run').splitlines()
+        self.assertEqual(len(lines), 3)
+        self.assertIn('mkdir -p ~/.codex/kp-conductor/staging/engine-', lines[0])
+        self.assertTrue(lines[1].startswith('rsync -a --exclude __pycache__ '))
+        self.assertNotIn('--delete', lines[1])
+        self.assertIn('fixture-host:.codex/kp-conductor/staging/engine-', lines[1])
+        self.assertIn('maintainer receive --source ~/.codex/kp-conductor/staging/engine-', lines[2])
+        self.assertIn('--commit ' + self.head, lines[2])
+        self.export.assert_not_called()
+        self.process.assert_not_called()
+        self.assertEqual(record.read_bytes(), original)
+
+    def test_maintainer_deploy_rejects_unknown_host(self):
+        self.repository()
+        self.engine_record()
+        with self.assertRaisesRegex(SystemExit, 'unknown host'):
+            self.cli('maintainer', 'deploy', '--host', 'unknown')
+        self.process.assert_not_called()
+
+    def test_maintainer_deploy_rejects_commit_not_installed(self):
+        self.repository()
+        record = self.engine_record('b' * 40)
+        original = record.read_bytes()
+        with self.assertRaisesRegex(SystemExit, 'install this commit here first'):
+            self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.process.assert_not_called()
+        self.assertEqual(record.read_bytes(), original)
+
+    def deploy_result(self, returncode=0, stdout='', stderr=''):
+        return cx.subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def test_maintainer_deploy_success_records_host_commit(self):
+        self.repository()
+        record = self.engine_record()
+        self.process.side_effect = None
+        self.process.return_value = self.deploy_result(stdout='WARN environment checks failed after install, engine kept: proxy\n')
+        output = self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.assertIn('remote: WARN environment checks failed after install, engine kept: proxy', output)
+        self.assertEqual(json.loads(record.read_text())['hosts'], {'lab': self.head})
+        self.assertEqual([call.args[0][0] for call in self.process.call_args_list], ['ssh', 'rsync', 'ssh'])
+        self.assertIn('maintainer receive', self.process.call_args_list[-1].args[0][-1])
+        self.assertNotIn('--delete', self.process.call_args_list[1].args[0])
+
+    def test_maintainer_deploy_rsync_failure_does_not_record_host(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        self.process.side_effect = [self.deploy_result(), self.deploy_result(23, stderr='copy failed')]
+        with self.assertRaisesRegex(SystemExit, 'deploy failed at rsync: copy failed'):
+            self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.assertEqual(self.process.call_count, 2)
+        self.assertEqual(record.read_bytes(), original)
+
+    def test_maintainer_deploy_remote_receive_failure_does_not_record_host(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        self.process.side_effect = [self.deploy_result()] * 2 + [self.deploy_result(1, stderr='FAIL fixture\n')]
+        with self.assertRaisesRegex(SystemExit, 'deploy failed'):
+            self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.assertEqual(record.read_bytes(), original)
+
+    def test_skills_no_final_newline_round_trip_preserves_bytes(self):
+        for original in (b'model = "keep"', b'# comment', b'model = "keep"\r\n# end'):
+            with self.subTest(original=original):
+                self.config.write_bytes(original)
+                self.skill_file('no-newline')
+                self.skill_file('another')
+                self.cli('skills', 'off', 'no-newline')
+                self.assertIn(b'# conductor:skills:begin v1 +newline', self.config.read_bytes())
+                self.cli('skills', 'off', 'another')
+                self.cli('skills', 'on', 'no-newline')
+                self.cli('skills', 'on', 'another')
+                self.assertEqual(self.config.read_bytes(), original)
+
+    def test_export_head_omits_ignored_private_files(self):
+        self.repo.mkdir()
+        git = ['git', '-c', 'user.name=t', '-c', 'user.email=tester@localhost', '-C', str(self.repo)]
+        def command(*args):
+            return self.real_process(git + list(args), check=True, capture_output=True, text=True).stdout.strip()
+        command('init', '-q', '-b', 'main')
+        (self.repo / '.gitignore').write_text('plan.json\n')
+        (self.repo / 'tracked').write_text('committed')
+        (self.repo / 'plan.json').write_text('private')
+        command('add', '.')
+        tree = command('write-tree')
+        head = command('commit-tree', tree, '-m', 'fixture')
+        command('update-ref', 'refs/heads/main', head)
+        (self.repo / 'tracked').write_text('uncommitted')
+        with patch.object(cx.subprocess, 'run', self.real_process):
+            target = cx.export_head(self.repo, head, self.root / 'export')
+        self.assertEqual((target / 'tracked').read_text(), 'committed')
+        self.assertFalse((target / 'plan.json').exists())
+        self.assertFalse((target / '.git').exists())
+
+    def test_maintainer_non_main_branch_blocks_install_and_deploy(self):
+        self.repository()
+        self.engine_record()
+        self.branch = 'unreviewed'
+        self.assertIn('branch: unreviewed', self.cli('maintainer', 'status'))
+        for action in ('install', 'deploy'):
+            with self.subTest(action=action), self.assertRaisesRegex(SystemExit, 'branch.*main'):
+                self.cli('maintainer', action, *(['--host', 'lab'] if action == 'deploy' else []))
+        self.export.assert_not_called()
+        self.process.assert_not_called()
+
+    def test_maintainer_configured_branch_allows_install(self):
+        self.repository()
+        path = self.state / 'local/settings.json'
+        settings = json.loads(path.read_text())
+        settings['maintainer']['branch'] = 'release'
+        path.write_text(json.dumps(settings))
+        self.branch = 'release'
+        self.cli('maintainer', 'install', '--dry-run')
+        self.export.assert_not_called()
+
+    def receive(self):
+        return self.cli('maintainer', 'receive', '--source', str(self.repo / 'skills'), '--commit', self.head)
+
+    def test_receive_outdated_entry_is_installed_but_present_is_not(self):
+        self.repository()
+        for status in ('outdated', 'present'):
+            with self.subTest(status=status):
+                self.process.reset_mock()
+                if status == 'outdated':
+                    self.process.side_effect = [self.deploy_result(stdout='entry: outdated'), self.deploy_result(), self.deploy_result()]
+                else:
+                    self.process.side_effect = [self.deploy_result(stdout='entry: present'), self.deploy_result()]
+                with patch.object(cx, 'now', return_value=cx.datetime.datetime(2026, 1, 1, microsecond=1 if status == 'outdated' else 2)):
+                    self.receive()
+                commands = [call.args[0] for call in self.process.call_args_list]
+                self.assertEqual(sum(command[-2:] == ['entry', 'install'] for command in commands), status == 'outdated')
+                self.assertEqual(commands[-1][-1], 'doctor')
+                for call in self.process.call_args_list:
+                    self.assertEqual(call.args[0][0], cx.sys.executable)
+                    self.assertIn('--home', call.args[0])
+                    self.assertEqual(call.kwargs['env']['HOME'], str(self.home))
+                    self.assertGreater(call.kwargs['timeout'], 0)
+
+    def test_receive_doctor_failure_restores_folders_and_entry(self):
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        original = self.snapshot(self.skills)
+        agents = self.agents_with_old_block()
+        before = agents.read_bytes()
+        self.process.side_effect = self.entry_rewriting([self.deploy_result(stdout='entry: outdated'), self.deploy_result(),
+                                                         self.deploy_result(1, stdout='PASS other\nFAIL fixture\n')])
+        with self.assertRaisesRegex(SystemExit, 'FAIL fixture'):
+            self.receive()
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.assertFalse((self.state / 'engine.json').exists())
+        commands = [call.args[0] for call in self.process.call_args_list]
+        self.assertEqual([command[-2:] for command in commands].count(['entry', 'install']), 1)
+        self.assertEqual(agents.read_bytes(), before)
+        self.assertTrue(list((self.state / 'backups').glob('engine-*/new-kp-conductor/SKILL.md')))
+
+    def agents_with_old_block(self):
+        agents = self.home / '.codex/AGENTS.md'
+        agents.write_text('# mine\n<!-- conductor:begin v1 -->\nolder wording\n<!-- conductor:end -->\n')
+        return agents
+
+    def entry_rewriting(self, results):
+        results = iter(results)
+        def run(command, **options):
+            if command[-2:] == ['entry', 'install']:
+                (self.home / '.codex/AGENTS.md').write_text('rewritten by the new engine\n')
+            return next(results)
+        return run
+
+    def test_receive_unreadable_agents_stops_before_any_folder_moves(self):
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        original = self.snapshot(self.skills)
+        agents = self.agents_with_old_block()
+        reader = Path.read_bytes
+        def unreadable(path):
+            if path.name == 'AGENTS.md':
+                raise PermissionError('AGENTS.md unreadable')
+            return reader(path)
+        with patch.object(Path, 'read_bytes', unreadable), self.assertRaisesRegex(SystemExit, 'nothing changed'):
+            self.receive()
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.process.assert_not_called()
+        self.assertTrue(agents.exists())
+
+    def test_receive_doctor_crash_rolls_back_even_after_environment_failures(self):
+        self.repository()
+        self.process.side_effect = [self.deploy_result(stdout='entry: present'),
+                                    self.deploy_result(1, stdout='FAIL proxy: unreachable\n',
+                                                       stderr='Traceback (most recent call last):\nAttributeError: x\n')]
+        with self.assertRaisesRegex(SystemExit, 'doctor did not finish'):
+            self.receive()
+        self.assertFalse((self.state / 'engine.json').exists())
+
+    def test_rollback_continues_after_one_folder_fails(self):
+        self.repository()
+        for name in ('kp-conductor', 'kp-conductor-onboard'):
+            self.skill_file(name, root='.codex/skills')
+        original = self.snapshot(self.skills)
+        self.process.side_effect = [self.deploy_result(stdout='entry: present'), self.deploy_result(1, stdout='FAIL fixture: x\n')]
+        rename = cx.os.rename
+        def flaky(source, target):
+            if str(target).endswith('new-kp-conductor'):
+                raise OSError('busy')
+            return rename(source, target)
+        with patch.object(cx.os, 'rename', side_effect=flaky), contextlib.redirect_stdout(io.StringIO()) as output, \
+                self.assertRaises(SystemExit):
+            cx.main(['--home', str(self.home), 'maintainer', 'receive', '--source', str(self.repo / 'skills'), '--commit', self.head])
+        self.assertIn('engine rollback incomplete', output.getvalue())
+        self.assertEqual((self.skills / 'kp-conductor-onboard/SKILL.md').read_bytes(), original['kp-conductor-onboard/SKILL.md'])
+
+    def test_receive_environment_only_doctor_failure_keeps_engine(self):
+        self.repository()
+        self.process.side_effect = [self.deploy_result(stdout='entry: present'),
+                                    self.deploy_result(1, stdout='FAIL proxy: unreachable\nFAIL routed models in catalog: missing x\n')]
+        output = self.receive()
+        self.assertIn('environment checks failed after install, engine kept', output)
+        self.assertEqual(json.loads((self.state / 'engine.json').read_text())['commit'], self.head)
+        self.assertEqual((self.skills / 'kp-conductor/SKILL.md').read_text(), 'new kp-conductor')
+
+    def test_receive_absent_entry_on_fresh_machine_keeps_engine(self):
+        self.repository()
+        self.process.side_effect = [self.deploy_result(stdout='entry: absent'),
+                                    self.deploy_result(1, stdout='FAIL AGENTS.md pointer: absent\n')]
+        self.assertIn('engine kept: AGENTS.md pointer', self.receive())
+        self.assertEqual(json.loads((self.state / 'engine.json').read_text())['commit'], self.head)
+        self.process.side_effect = [self.deploy_result(stdout='entry: present'),
+                                    self.deploy_result(1, stdout='FAIL AGENTS.md pointer: absent\n')]
+        with patch.object(cx, 'now', return_value=cx.datetime.datetime(2026, 1, 2)), self.assertRaisesRegex(SystemExit, 'AGENTS.md'):
+            self.receive()
+
+    def test_receive_engine_failure_with_proxy_down_still_rolls_back(self):
+        self.repository()
+        self.process.side_effect = [self.deploy_result(stdout='entry: present'),
+                                    self.deploy_result(1, stdout='FAIL proxy: unreachable\nFAIL roles.json: invalid\n')]
+        with self.assertRaisesRegex(SystemExit, 'roles.json'):
+            self.receive()
+        self.assertFalse((self.state / 'engine.json').exists())
+
+    def test_receive_record_write_failure_rolls_back_engine_and_entry(self):
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        original = self.snapshot(self.skills)
+        agents = self.agents_with_old_block()
+        before = agents.read_bytes()
+        self.process.side_effect = self.entry_rewriting([self.deploy_result(stdout='entry: outdated'), self.deploy_result(),
+                                                         self.deploy_result()])
+        write = cx.atomic_write
+        def fail_record(path, *args, **kwargs):
+            if Path(path).name == 'engine.json':
+                raise OSError('record write failed')
+            return write(path, *args, **kwargs)
+        with patch.object(cx, 'atomic_write', side_effect=fail_record), self.assertRaisesRegex(OSError, 'record write failed'):
+            self.receive()
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.assertFalse((self.state / 'engine.json').exists())
+        self.assertEqual(self.process.call_args_list[-1].args[0][-1], 'doctor')
+        self.assertEqual(agents.read_bytes(), before)
+
+    def test_receive_rejects_engine_symlink_without_touching_target(self):
+        self.repository()
+        target = self.root / 'external'
+        target.mkdir()
+        (target / 'keep').write_text('untouched')
+        self.skills.mkdir()
+        (self.skills / 'kp-conductor').symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(SystemExit, 'symlink'):
+            self.receive()
+        self.assertEqual((target / 'keep').read_text(), 'untouched')
+        self.assertTrue((self.skills / 'kp-conductor').is_symlink())
+        self.process.assert_not_called()
+
+    def test_receive_needs_no_maintainer_settings_and_cleans_only_staging(self):
+        self.repository()
+        (self.state / 'local/settings.json').write_text('{}')
+        source = self.state / 'staging' / 'engine-fixture'
+        cx.shutil.copytree(self.repo / 'skills', source)
+        self.cli('maintainer', 'receive', '--source', str(source))
+        self.assertFalse(source.exists())
+        self.assertTrue((self.repo / 'skills').exists())
+        self.assertIsNone(json.loads((self.state / 'engine.json').read_text())['commit'])
+
+    def test_receive_is_guarded_by_mutation_lock(self):
+        self.repository()
+        with patch.object(cx, 'mutation_lock', wraps=cx.mutation_lock) as lock:
+            self.receive()
+        lock.assert_called_once()
+
+    def test_maintainer_deploy_each_stage_failure_leaves_hosts_unchanged(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        for index, stage in enumerate(('staging', 'rsync', 'receive')):
+            with self.subTest(stage=stage):
+                self.process.reset_mock()
+                self.process.side_effect = [self.deploy_result()] * index + [self.deploy_result(1, stderr='stage failed')]
+                with self.assertRaisesRegex(SystemExit, 'deploy failed at ' + stage + ': stage failed'):
+                    self.cli('maintainer', 'deploy', '--host', 'lab')
+                self.assertEqual(self.process.call_count, index + 1)
+                self.assertEqual(record.read_bytes(), original)
+
+    def test_maintainer_deploy_timeout_leaves_hosts_unchanged(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        self.process.side_effect = cx.subprocess.TimeoutExpired(['ssh'], 600, stderr='timed out')
+        with self.assertRaisesRegex(SystemExit, 'deploy failed at staging: timed out'):
+            self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.assertEqual(record.read_bytes(), original)
+
+    def test_skills_added_newline_is_removed_before_later_user_content(self):
+        original = b'model = "keep"'
+        self.config.write_bytes(original)
+        self.skill_file('no-newline')
+        self.cli('skills', 'off', 'no-newline')
+        with self.config.open('ab') as stream:
+            stream.write(b'\n# later user comment')
+        self.cli('skills', 'on', 'no-newline')
+        self.assertEqual(self.config.read_bytes(), original + b'\n# later user comment')
+
+    def test_receive_dry_run_does_not_replace_engine(self):
+        self.repository()
+        self.cli('maintainer', 'receive', '--source', str(self.repo / 'skills'), '--dry-run')
+        self.assertFalse(self.skills.exists())
+        self.process.assert_not_called()
+        self.assertFalse((self.state / 'engine.json').exists())
+
+    def test_maintainer_deploy_export_failure_leaves_hosts_unchanged(self):
+        self.repository()
+        record = self.engine_record()
+        original = record.read_bytes()
+        self.export.side_effect = SystemExit('git archive failed: fixture')
+        with self.assertRaisesRegex(SystemExit, 'deploy failed at export: git archive failed: fixture'):
+            self.cli('maintainer', 'deploy', '--host', 'lab')
+        self.process.assert_not_called()
+        self.assertEqual(record.read_bytes(), original)
+
+    def test_receive_rollback_entry_timeout_keeps_original_failure(self):
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        original = self.snapshot(self.skills)
+        self.process.side_effect = [self.deploy_result(stdout='entry: outdated'), self.deploy_result(),
+                                    self.deploy_result(1, stdout='FAIL original'),
+                                    cx.subprocess.TimeoutExpired(['entry'], 120)]
+        with self.assertRaisesRegex(SystemExit, 'FAIL original'):
+            self.receive()
+        self.assertEqual(self.snapshot(self.skills), original)
+        self.assertFalse((self.state / 'engine.json').exists())
+
+    def test_receive_entry_handler_uses_installed_script_without_nested_lock(self):
+        import runpy
+        self.repository()
+        self.skill_file('kp-conductor', root='.codex/skills')
+        script = self.skills / 'kp-conductor/scripts/conductor.py'
+        with patch.object(cx, 'HOME_OVERRIDE', self.home):
+            cx.engine_command('entry', 'install')
+        command = self.process.call_args.args[0]
+        self.assertEqual(command[1], '-c')
+        def handler(args):
+            self.assertEqual(args.action, 'install')
+            self.assertFalse(args.dry_run)
+            self.assertEqual(handler.__globals__['HOME_OVERRIDE'], self.home)
+        # Execute only the subprocess bootstrap; the installed handler is mocked.
+        with patch.object(runpy, 'run_path', return_value={'command_entry': handler}) as loader, \
+                patch.object(cx.sys, 'argv', ['-c'] + command[3:]), \
+                patch.dict(handler.__globals__, {'HOME_OVERRIDE': None}):
+            exec(command[2], {})
+        loader.assert_called_once_with(str(script))
+
+    def test_receive_home_override_is_forwarded_when_home_environment_differs(self):
+        self.repository()
+        with patch.dict(os.environ, {'HOME': str(self.root / 'other-home')}):
+            self.receive()
+        for call in self.process.call_args_list:
+            self.assertEqual(call.kwargs['env']['HOME'], str(self.home))
+            command = call.args[0]
+            self.assertEqual(command[command.index('--home') + 1], str(self.home))

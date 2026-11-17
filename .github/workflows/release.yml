@@ -1,0 +1,75 @@
+# Every push to main is one release: test, check the version, then publish the CHANGELOG.md notes.
+# Rules: RELEASING.md
+name: test and release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# No concurrency group: a group keeps only one pending run and cancels the others,
+# which would drop the release of a push made while an earlier run is still going.
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python: '3.9'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: macos-latest
+            python: ''
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - if: matrix.python != ''
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests
+        run: |
+          python3 --version
+          HOME="$(mktemp -d)" CONDUCTOR_HOME="$(mktemp -d)" python3 -B -m unittest discover -s tests
+      - name: Version and release notes
+        run: python3 tools/release.py check
+
+  release:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="$(python3 tools/release.py version)"
+          tagged="$(git ls-remote origin "refs/tags/v$version^{}" "refs/tags/v$version" | awk 'NR==1 {print $1}')"
+          if [ -n "$tagged" ]; then
+            peeled="$(git ls-remote origin "refs/tags/v$version^{}" | awk '{print $1}')"
+            if [ "${peeled:-$tagged}" != "$GITHUB_SHA" ]; then
+              echo "::error::v$version is already tagged on another commit; raise VERSION and add its notes"
+              exit 1
+            fi
+          fi
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version is already published from this commit"
+            exit 0
+          fi
+          python3 tools/release.py notes > "$RUNNER_TEMP/notes.md"
+          gh release create "v$version" --target "$GITHUB_SHA" --title "v$version" --notes-file "$RUNNER_TEMP/notes.md"

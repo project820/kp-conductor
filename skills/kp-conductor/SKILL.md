@@ -213,7 +213,11 @@ settings의 quota 키마다 사용률 `p`와 소진 속도 `b`를 본다. 여러
 
 ## 출력: Korean Protocol
 
-한국어 출력은 `~/.codex/skills/korean-protocol/SKILL.md`를 따른다. L1 코어 작성 규칙은 전역 AGENTS.md의 conductor 블록에 있다. 사용자 지정 형식이 우선한다.
+한국어 출력은 Korean Protocol을 따른다. 기본 규칙은 진입 블록에 있고, KP 전문은 진입 블록이 정한 경우에만 읽는다. 진입 블록이 없는 환경(`entry=none`)이면 [entry-block.md](references/entry-block.md)의 "한국어 출력 규칙" 절을 대신 읽는다.
+
+아래 "KP 경로"는 `~/.codex/skills/korean-protocol/SKILL.md`다. 그 파일이 없으면 `~/.agents/skills/korean-protocol/SKILL.md`다.
+
+L1 코어 작성 규칙은 전역 AGENTS.md의 conductor 블록에 있다. 사용자 지정 형식이 우선한다.
 
 | 수준 | 선택 조건 | 형식·참조 |
 |---|---|---|
@@ -227,7 +231,7 @@ settings의 quota 키마다 사용률 `p`와 소진 속도 `b`를 본다. 여러
 - **L4 범위:** 렌더링·음성 합성은 요청받을 때만 한다. 먼저 manim 설치를 확인한다. 코드 완료와 렌더링 완료를 구별하고 합성 완료도 따로 보고한다.
 - **절약:** 절약 상태나 자원 절약 지시가 있으면 L2까지만 쓴다. 사용자가 L3·L4를 요청하면 예외다.
 - **표시 제한:** 메신저·일반 터미널의 도식은 조건 목록으로 쓴다. L3·L4는 파일 경로를 준다.
-- **위임:** 한국어 산출물 지시문에 `KP <수준> 적용: ~/.codex/skills/korean-protocol/SKILL.md`와 참조 경로를 넣는다. L3·L4는 오케스트레이터의 선택으로 명시 요청 조건을 충족했다고 적는다. 서브에이전트 반환은 KP 대상이 아니며 사용자 전달 때 다시 쓴다.
+- **위임:** 한국어 산출물 지시문에 `KP <수준> 적용: <KP 경로>`와 참조 경로를 넣는다. L3·L4는 오케스트레이터의 선택으로 명시 요청 조건을 충족했다고 적는다. 서브에이전트 반환은 KP 대상이 아니며 사용자 전달 때 다시 쓴다.
 - **검토:** resources.md의 KP 검토 항목을 적용한다.
 - **린트:** 한국어 문서는 검토 전 `cx kp-lint <파일> --style doc`으로 경고를 고친다. 검토 지시에는 남은 수와 이유만 적는다.
 - **채팅 검사:** 두 문단 이상은 `cx kp-lint <파일|-> --style chat`으로 검사한다. 단답 L1은 생략한다.
@@ -242,6 +246,6 @@ settings의 quota 키마다 사용률 `p`와 소진 속도 `b`를 본다. 여러
 
 - 병렬 2개 이상·경쟁 실행 전에는 [parallel.md](references/parallel.md)를 읽는다.
 - 비주얼 트랙은 [visual.md](references/visual.md), 분야·스킬 선택은 [resources.md](references/resources.md)를 읽는다.
-- 회고·신규 모델은 [retrospective.md](references/retrospective.md)를 읽는다. 개인 설정만 수정하며 엔진은 upstream 제안으로 남긴다.
+- 회고·신규 모델은 [retrospective.md](references/retrospective.md)를 읽는다. 개인 설정만 수정하며 엔진은 upstream 제안으로 남긴다. settings에 `maintainer`가 있고 `retro.apply=notify`이면 엔진 변경을 로컬 저장소에 반영한다.
 - 스킬 수명 주기와 중복 감사는 [skills-lifecycle.md](references/skills-lifecycle.md)를 읽는다.
 - 온보딩·규칙 변경 검증은 [regression.md](references/regression.md)의 시범 요청을 쓴다.

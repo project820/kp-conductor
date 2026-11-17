@@ -1,0 +1,12 @@
+#!/bin/sh
+# KP Conductor: every push to main carries a new version and its release notes (RELEASING.md).
+# Turn on once per clone: git config core.hooksPath .githooks
+remote="$1"
+top="$(git rev-parse --show-toplevel)" || exit 1
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+  if [ "$remote_ref" = refs/heads/main ] && [ "$local_sha" != "$zero" ]; then
+    python3 "$top/tools/release.py" check --commit "$local_sha" --remote "$remote" || exit 1
+  fi
+done
+exit 0
