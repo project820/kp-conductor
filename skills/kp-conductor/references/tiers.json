@@ -1,0 +1,254 @@
+{
+ "version": "2026-11-17",
+ "basis": "Artificial Analysis Intelligence Index v5.0.1(2026-11-12 조회)의 최고 강도 지수와 작성자 환경의 시범 관찰로 정했다. 다른 환경에서는 측정하지 않았다. 수치 원자료는 넣지 않았고 cx aa-refresh로 각자 받는다.",
+ "models": {
+  "anthropic/claude-fable-5-2": {
+   "vendor": "anthropic",
+   "tier": "frontier",
+   "aa_slug": "claude-fable-5-2",
+   "note": "메인 세션에서 직접 지시를 받으면 거절하거나 모델이 바뀐 관찰이 있다. 서브에이전트로 쓴다"
+  },
+  "anthropic/claude-opus-5-5": {
+   "vendor": "anthropic",
+   "tier": "frontier",
+   "aa_slug": "claude-opus-5-5",
+   "note": ""
+  },
+  "gpt-6-astra": {
+   "vendor": "openai",
+   "tier": "frontier",
+   "aa_slug": "gpt-6-astra",
+   "note": "max 강도가 xhigh보다 낫지 않은 실측이 있다"
+  },
+  "gpt-6.1-sol": {
+   "vendor": "openai",
+   "tier": "high",
+   "aa_slug": "gpt-6-1-sol",
+   "note": ""
+  },
+  "anthropic/claude-sonnet-5-5": {
+   "vendor": "anthropic",
+   "tier": "high",
+   "aa_slug": "claude-sonnet-5-5",
+   "note": "메인 세션 시범 1회에서 cx route를 실행하지 않았다"
+  },
+  "gpt-6.1-terra": {
+   "vendor": "openai",
+   "tier": "standard",
+   "aa_slug": "gpt-6-1-terra",
+   "note": ""
+  },
+  "anthropic/claude-haiku-5-5": {
+   "vendor": "anthropic",
+   "tier": "standard",
+   "aa_slug": "claude-haiku-5-5",
+   "note": ""
+  },
+  "xai/grok-4.7": {
+   "vendor": "xai",
+   "tier": "standard",
+   "aa_slug": "grok-4-7",
+   "note": ""
+  },
+  "gpt-6-luna": {
+   "vendor": "openai",
+   "tier": "light",
+   "aa_slug": "gpt-6-luna",
+   "note": ""
+  }
+ },
+ "tier_order": [
+  "frontier",
+  "high",
+  "standard",
+  "light"
+ ],
+ "seats": {
+  "orchestrator": [
+   [
+    "anthropic/claude-opus-5-5",
+    "high"
+   ],
+   [
+    "gpt-6-astra",
+    "high"
+   ]
+  ],
+  "cx-explore": [
+   [
+    "gpt-6.1-terra",
+    "low"
+   ],
+   [
+    "anthropic/claude-haiku-5-5",
+    "medium"
+   ],
+   [
+    "gpt-6.1-sol",
+    "low"
+   ]
+  ],
+  "cx-build": [
+   [
+    "gpt-6.1-sol",
+    "high"
+   ],
+   [
+    "anthropic/claude-sonnet-5-5",
+    "high"
+   ],
+   [
+    "gpt-6-astra",
+    "medium"
+   ]
+  ],
+  "cx-build-lite": [
+   [
+    "gpt-6.1-sol",
+    "medium"
+   ],
+   [
+    "anthropic/claude-sonnet-5-5",
+    "medium"
+   ],
+   [
+    "gpt-6.1-terra",
+    "high"
+   ]
+  ],
+  "cx-build-pro": [
+   [
+    "gpt-6-astra",
+    "high"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "high"
+   ]
+  ],
+  "cx-review": [
+   [
+    "gpt-6-astra",
+    "high"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+   ],
+   [
+    "gpt-6.1-sol",
+    "xhigh"
+   ]
+  ],
+  "cx-hard": [
+   [
+    "anthropic/claude-fable-5-2",
+    "high"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+   ],
+   [
+    "gpt-6-astra",
+    "xhigh"
+   ]
+  ],
+  "cx-hard-fast": [
+   [
+    "anthropic/claude-fable-5-2",
+    "medium"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "high"
+   ],
+   [
+    "gpt-6-astra",
+    "high"
+   ]
+  ],
+  "cx-hard-alt1": [
+   [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+   ],
+   [
+    "gpt-6-astra",
+    "xhigh"
+   ],
+   [
+    "gpt-6.1-sol",
+    "xhigh"
+   ]
+  ],
+  "cx-hard-alt2": [
+   [
+    "gpt-6-astra",
+    "xhigh"
+   ],
+   [
+    "gpt-6.1-sol",
+    "xhigh"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+   ]
+  ],
+  "cx-council": [
+   [
+    "anthropic/claude-fable-5-2",
+    "high"
+   ],
+   [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+   ],
+   [
+    "gpt-6-astra",
+    "xhigh"
+   ]
+  ]
+ },
+ "seat_kind": {
+  "orchestrator": "build",
+  "cx-explore": "explore",
+  "cx-build": "build",
+  "cx-build-lite": "build",
+  "cx-build-pro": "build",
+  "cx-review": "review",
+  "cx-hard": "judge",
+  "cx-hard-fast": "judge",
+  "cx-hard-alt1": "judge",
+  "cx-hard-alt2": "judge",
+  "cx-council": "judge"
+ },
+ "constraints": [
+  {
+   "role": "cx-hard-alt1",
+   "differs_from": [
+    "cx-hard"
+   ]
+  },
+  {
+   "role": "cx-hard-alt2",
+   "differs_from": [
+    "cx-hard",
+    "cx-hard-alt1"
+   ]
+  },
+  {
+   "role": "cx-review",
+   "differs_from": [
+    "cx-build"
+   ]
+  }
+ ],
+ "default_effort": {
+  "explore": "low",
+  "build": "high",
+  "review": "xhigh",
+  "judge": "xhigh"
+ }
+}

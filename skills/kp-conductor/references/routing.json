@@ -1,0 +1,599 @@
+{
+ "_note": "cx route 가 요청 문장을 keywords 로 매칭해 스킬과 역할을 제안한다. ASCII 키워드는 단어 경계로, 한글 키워드는 부분 문자열로 찾는다. skills 의 첫 항목이 주 스킬이다. role 의 허용 목록(roles.json)에 skills 가 모두 있어야 한다(cx doctor 가 확인). mcp_usage 는 감사에서 MCP 호출을 스킬 사용으로 센다. requires(선택)는 keywords의 부분집합이다. 문자열 목록이면 하나만 맞아도 되고, 목록의 목록이면 그룹마다 하나씩 맞아야 경로가 켜진다. sufficient(선택)의 키워드가 맞으면 requires 없이 켜진다.",
+ "mcp_usage": {
+  "stylegallery": [
+   "stylegallery",
+   "stylegallery_material"
+  ],
+  "data-analytics:*": [
+   "data"
+  ]
+ },
+ "routes": [
+  {
+   "id": "conductor-setup",
+   "label": "Conductor 온보딩과 설치",
+   "keywords": [
+    "온보딩",
+    "설치",
+    "셋업",
+    "conductor 설정"
+   ],
+   "skills": [
+    "kp-conductor-onboard"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "kp-conductor-onboard로 환경을 탐지하고 개인 설정을 제안한다. 적용은 온보딩의 승인 절차를 따른다"
+  },
+  {
+   "id": "ui-ux",
+   "label": "UI·UX 설계와 화면 개선",
+   "keywords": [
+    "ui",
+    "ux",
+    "화면 설계",
+    "화면 개선",
+    "화면 디자인",
+    "디자인 시스템",
+    "레이아웃",
+    "사용성",
+    "와이어프레임",
+    "리디자인",
+    "접근성",
+    "스타일갤러리",
+    "stylegallery",
+    "디자인",
+    "디자인 퀄리티",
+    "상용 서비스",
+    "화면 다듬"
+   ],
+   "skills": [
+    "stylegallery-search",
+    "stylegallery"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "공개 자료와 화면 근거를 먼저 모으고 기존 디자인 시스템을 유지한다. 화면 산출물은 비주얼 트랙을 붙이고 cx-review가 검토한다"
+  },
+  {
+   "id": "web-build",
+   "label": "웹사이트·웹앱 제작과 배포",
+   "keywords": [
+    "웹사이트",
+    "홈페이지",
+    "사이트",
+    "웹앱",
+    "랜딩",
+    "website",
+    "landing",
+    "deploy",
+    "배포",
+    "호스팅",
+    "도메인",
+    "vercel",
+    "nextjs",
+    "next.js",
+    "react"
+   ],
+   "skills": [
+    "sites:sites",
+    "vercel:deployments-cicd",
+    "vercel:vercel-cli",
+    "vercel:react-best-practices",
+    "vercel:verification"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "배포·도메인·공개 게시는 R3이므로 실행 전 사용자 승인"
+  },
+  {
+   "id": "browser-qa",
+   "label": "브라우저 자동화와 웹 QA",
+   "keywords": [
+    "브라우저",
+    "스크린샷",
+    "클릭",
+    "폼 입력",
+    "e2e",
+    "playwright",
+    "웹 테스트",
+    "화면 테스트",
+    "로그인 화면"
+   ],
+   "skills": [
+    "playwright",
+    "vercel:verification"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "브라우저 작업은 Codex 내장 브라우저로 한다"
+  },
+  {
+   "id": "research",
+   "label": "출처가 필요한 웹 조사",
+   "keywords": [
+    "웹 조사",
+    "시장 조사",
+    "자료 조사",
+    "사례 조사",
+    "리서치",
+    "research",
+    "출처",
+    "경쟁사",
+    "동향",
+    "논문"
+   ],
+   "skills": [],
+   "role": "cx-explore",
+   "risk": "R1",
+   "note": "기본 틀에는 전용 스킬이 없다. 설치된 조사 스킬을 고르고 대상이 많으면 cx-explore 2~3개로 나눈다"
+  },
+  {
+   "id": "blocked-sites",
+   "label": "차단된 사이트 읽기",
+   "keywords": [
+    "x.com",
+    "트위터",
+    "twitter",
+    "레딧",
+    "reddit",
+    "유튜브",
+    "youtube",
+    "네이버 블로그",
+    "쿠팡",
+    "링크드인",
+    "linkedin",
+    "차단된 사이트",
+    "막힌 사이트"
+   ],
+   "skills": [],
+   "role": "cx-explore",
+   "risk": "R1",
+   "note": "기본 틀에는 전용 스킬이 없다. 접근 가능한 공개 자료와 설치된 조사 스킬을 확인한다"
+  },
+  {
+   "id": "data",
+   "label": "데이터 분석·지표·대시보드",
+   "keywords": [
+    "데이터 분석",
+    "데이터로",
+    "지표",
+    "kpi",
+    "대시보드",
+    "dashboard",
+    "차트",
+    "그래프",
+    "sql",
+    "추이",
+    "시장 규모",
+    "매출 분석",
+    "매출 추이"
+   ],
+   "skills": [
+    "data-analytics:index",
+    "data-analytics:build-dashboard",
+    "data-analytics:visualize-data",
+    "data-analytics:metric-diagnostics",
+    "data-analytics:validate-data"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "수치가 들어간 산출물은 다른 계열 검토를 한 번 받는다"
+  },
+  {
+   "id": "spreadsheet",
+   "label": "스프레드시트",
+   "keywords": [
+    "엑셀",
+    "excel",
+    "xlsx",
+    "csv",
+    "스프레드시트",
+    "구글 시트",
+    "google sheets"
+   ],
+   "skills": [
+    "spreadsheets:spreadsheets",
+    "google-drive:google-sheets"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "Google Sheets면 google-drive:google-sheets"
+  },
+  {
+   "id": "docs",
+   "label": "Word·Google 문서",
+   "keywords": [
+    "워드",
+    "word",
+    "docx",
+    "문서 파일",
+    "구글 문서",
+    "google docs"
+   ],
+   "skills": [
+    "documents:documents",
+    "google-drive:google-docs"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "렌더링 확인까지 한다"
+  },
+  {
+   "id": "slides",
+   "label": "발표 자료",
+   "keywords": [
+    "발표",
+    "ppt",
+    "pptx",
+    "슬라이드",
+    "프레젠테이션",
+    "deck",
+    "덱"
+   ],
+   "skills": [
+    "presentations:presentations",
+    "google-drive:google-slides"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "기존 Google Slides 덱이면 google-drive:google-slides"
+  },
+  {
+   "id": "pdf",
+   "label": "PDF 읽기와 생성",
+   "keywords": [
+    "pdf"
+   ],
+   "skills": [
+    "pdf:pdf"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "페이지를 렌더링해 확인한다"
+  },
+  {
+   "id": "hwp",
+   "label": "한글(HWP·HWPX)과 공문서",
+   "keywords": [
+    "hwp",
+    "hwpx",
+    "한글 파일",
+    "공문",
+    "기안문",
+    "서식 채",
+    "신구대조표"
+   ],
+   "skills": [],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "기본 틀에는 전용 스킬이 없다. 설치된 문서 변환 스킬의 지원 형식을 먼저 확인한다"
+  },
+  {
+   "id": "korean-writing",
+   "label": "한국어 대외 문서와 윤문",
+   "keywords": [
+    "윤문",
+    "ai 티",
+    "ai티",
+    "번역투",
+    "대외 문서",
+    "보도자료",
+    "공지문",
+    "연설문",
+    "kp",
+    "korean protocol"
+   ],
+   "skills": [
+    "korean-protocol"
+   ],
+   "role": "cx-hard",
+   "risk": "R2",
+   "note": "대외 최종본은 R3다. 지시문에 KP 경로를 적는다. 화면의 AI 티는 ui-unslop으로 처리한다"
+  },
+  {
+   "id": "ui-unslop",
+   "label": "화면의 AI 티·템플릿 느낌 제거",
+   "keywords": [
+    "unslop",
+    "언슬롭",
+    "슬롭",
+    "slop",
+    "vibecoded",
+    "바이브코딩 티",
+    "ai 티",
+    "ai티",
+    "ai스러",
+    "ai 스러",
+    "ai 느낌 빼",
+    "ai 느낌 없애",
+    "ai 느낌 지워",
+    "ai가 만든 것 같",
+    "ai가 만든 티",
+    "템플릿 같",
+    "템플릿 느낌",
+    "양산형 같",
+    "양산형 디자인",
+    "양산형 화면",
+    "양산형 ui",
+    "화면",
+    "대시보드",
+    "랜딩",
+    "페이지",
+    "ui",
+    "dashboard",
+    "screen",
+    "landing page",
+    "웹사이트",
+    "사이트",
+    "레이아웃",
+    "버튼",
+    "디자인",
+    "html"
+   ],
+   "requires": [
+    [
+     "슬롭",
+     "slop",
+     "vibecoded",
+     "바이브코딩 티",
+     "ai 티",
+     "ai티",
+     "ai스러",
+     "ai 스러",
+     "ai 느낌 빼",
+     "ai 느낌 없애",
+     "ai 느낌 지워",
+     "ai가 만든 것 같",
+     "ai가 만든 티",
+     "템플릿 같",
+     "템플릿 느낌",
+     "양산형 같",
+     "양산형 디자인",
+     "양산형 화면",
+     "양산형 ui"
+    ],
+    [
+     "화면",
+     "대시보드",
+     "랜딩",
+     "페이지",
+     "ui",
+     "dashboard",
+     "screen",
+     "landing page",
+     "웹사이트",
+     "사이트",
+     "레이아웃",
+     "버튼",
+     "디자인",
+     "html"
+    ]
+   ],
+   "skills": [
+    "unslop",
+    "stylegallery-search",
+    "stylegallery"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "화면이면 unslop, 글이면 korean-writing을 쓴다. sufficient·requires로 화면과 AI 티를 함께 확인한다. 비주얼 트랙 2단계는 감사 목록과 방향 5줄로 대신한다. 감사·방향은 오케스트레이터가 맡고 패스만 cx-build에 넘긴다",
+   "sufficient": [
+    "unslop",
+    "언슬롭"
+   ]
+  },
+  {
+   "id": "image",
+   "label": "이미지 생성과 편집",
+   "keywords": [
+    "이미지 생성",
+    "그림",
+    "일러스트",
+    "로고",
+    "목업",
+    "사진 편집",
+    "배경 제거",
+    "image"
+   ],
+   "skills": [
+    "imagegen"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "대화 안에서 보여줄 이미지는 오케스트레이터가 직접 만든다"
+  },
+  {
+   "id": "cad",
+   "label": "CAD와 3D 모델",
+   "keywords": [
+    "cad",
+    "3d",
+    "step",
+    "stl",
+    "dxf",
+    "도면",
+    "fusion",
+    "퓨전",
+    "3d 프린팅",
+    "부품"
+   ],
+   "skills": [
+    "cad:cad",
+    "cad:dxf",
+    "cad:cad-viewer"
+   ],
+   "role": "cx-build",
+   "risk": "R1",
+   "note": "CAD 파일을 생성·검증하고 뷰어에서 확인한다"
+  },
+  {
+   "id": "openai",
+   "label": "OpenAI API와 Codex 설정",
+   "keywords": [
+    "openai",
+    "codex 설정",
+    "responses api",
+    "agents sdk",
+    "api 키",
+    "모델 가격"
+   ],
+   "skills": [
+    "openai-docs",
+    "openai-developers:agents",
+    "openai-developers:openai-api-troubleshooting"
+   ],
+   "role": "cx-explore",
+   "risk": "R1",
+   "note": "설정 변경은 오케스트레이터가 한다"
+  },
+  {
+   "id": "skills-dev",
+   "label": "스킬·플러그인 제작",
+   "keywords": [
+    "스킬 만들",
+    "스킬 수정",
+    "skill.md",
+    "플러그인 만들",
+    "plugin"
+   ],
+   "skills": [
+    "skill-creator",
+    "superpowers:writing-skills",
+    "plugin-creator:create-plugin"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "개인 설정은 retrospective.md를 따른다. 엔진 결함은 upstream 제안으로 남긴다"
+  },
+  {
+   "id": "debug",
+   "label": "버그 수정과 테스트",
+   "keywords": [
+    "버그",
+    "오류",
+    "에러",
+    "error",
+    "디버깅",
+    "debug",
+    "안 돼",
+    "작동 안",
+    "테스트 실패",
+    "실패하는 테스트",
+    "테스트 고쳐"
+   ],
+   "skills": [
+    "superpowers:systematic-debugging",
+    "superpowers:test-driven-development"
+   ],
+   "role": "cx-build",
+   "risk": "R2",
+   "note": "실패 경로를 먼저 재현한다"
+  },
+  {
+   "id": "judgment",
+   "label": "전략·재무·법률 판단",
+   "keywords": [
+    "전략",
+    "재무",
+    "회계",
+    "세무",
+    "법률",
+    "법적",
+    "계약서",
+    "약관",
+    "사업계획",
+    "사업 계획",
+    "밸류에이션",
+    "가치평가",
+    "손익",
+    "원가",
+    "예산",
+    "타당성",
+    "의사결정",
+    "strategy",
+    "finance",
+    "legal"
+   ],
+   "skills": [
+    "data-analytics:product-business-analysis",
+    "data-analytics:market-sizing"
+   ],
+   "role": "cx-hard",
+   "risk": "R2",
+   "note": "cx-hard가 본분석을 맡고 판단 지시문을 따른다. 수치 문서는 cx-review가 교차 검토한다"
+  },
+  {
+   "id": "review",
+   "label": "완성된 결과 검토",
+   "keywords": [
+    "검토",
+    "리뷰",
+    "review",
+    "점검"
+   ],
+   "skills": [
+    "superpowers:requesting-code-review",
+    "superpowers:verification-before-completion"
+   ],
+   "role": "cx-review",
+   "risk": "R2",
+   "note": "작성자와 다른 계열이 검토한다"
+  },
+  {
+   "id": "security",
+   "label": "보안 점검",
+   "keywords": [
+    "보안",
+    "취약점",
+    "security",
+    "시큐리티"
+   ],
+   "skills": [
+    "superpowers:requesting-code-review",
+    "superpowers:verification-before-completion"
+   ],
+   "role": "cx-review",
+   "risk": "R2",
+   "note": "보안 검토 범위와 재현 근거를 확인한다"
+  },
+  {
+   "id": "classify",
+   "label": "분류·채점·조건 판정",
+   "keywords": [
+    "분류",
+    "채점",
+    "루브릭",
+    "판정",
+    "rubric"
+   ],
+   "skills": [],
+   "role": "cx-review",
+   "risk": "R1",
+   "note": "설치된 분류·채점 도구를 고른다. API 답만으로 최종 인수하지 않는다"
+  },
+  {
+   "id": "google-work",
+   "label": "Drive·Gmail·Calendar",
+   "keywords": [
+    "드라이브",
+    "drive",
+    "gmail",
+    "지메일",
+    "메일함",
+    "캘린더",
+    "calendar",
+    "일정 확인"
+   ],
+   "skills": [
+    "google-drive:google-drive",
+    "gmail:gmail",
+    "google-calendar:google-calendar"
+   ],
+   "role": "cx-explore",
+   "risk": "R1",
+   "note": "메일 발송·일정 등록은 R3"
+  }
+ ]
+}

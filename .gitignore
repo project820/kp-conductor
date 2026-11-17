@@ -1,0 +1,9 @@
+.pytest_cache/
+__pycache__/
+*.pyc
+.DS_Store
+# Onboarding and trial work files hold personal paths; keep them out of the repository.
+plan.json
+routing-draft.json
+detect.json
+events.jsonl

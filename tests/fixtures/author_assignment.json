@@ -1,0 +1,43 @@
+{
+  "cx-explore": [
+    "gpt-6.1-terra",
+    "low"
+  ],
+  "cx-build": [
+    "gpt-6.1-sol",
+    "high"
+  ],
+  "cx-build-lite": [
+    "gpt-6.1-sol",
+    "medium"
+  ],
+  "cx-build-pro": [
+    "gpt-6-astra",
+    "high"
+  ],
+  "cx-review": [
+    "gpt-6-astra",
+    "high"
+  ],
+  "cx-hard": [
+    "anthropic/claude-fable-5-2",
+    "high"
+  ],
+  "cx-hard-fast": [
+    "anthropic/claude-fable-5-2",
+    "medium"
+  ],
+  "cx-hard-alt1": [
+    "anthropic/claude-opus-5-5",
+    "xhigh"
+  ],
+  "cx-hard-alt2": [
+    "gpt-6-astra",
+    "xhigh"
+  ],
+  "cx-council": [
+    "anthropic/claude-fable-5-2",
+    "high"
+  ],
+  "orchestrator": "anthropic/claude-opus-5-5"
+}

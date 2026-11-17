@@ -1,0 +1,9 @@
+{
+ "name": "korean-protocol",
+ "version": "v0.11.1",
+ "source": "https://github.com/project820/korean-protocol",
+ "source_commit": "564c68f76e961e00e20cc2261b502f53cf0112b4",
+ "release": "https://github.com/project820/korean-protocol/releases/tag/v0.11.1",
+ "license": "MIT",
+ "note": "Conductor 패키지에 넣은 고정 사본이다. 내용을 고치지 않는다. 갱신은 KP 릴리스를 받아 통째로 바꾼다."
+}
