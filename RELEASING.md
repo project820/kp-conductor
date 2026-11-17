@@ -27,9 +27,26 @@ MINOR를 올리면 PATCH는 0으로 되돌린다.
 포함한 Korean Protocol은 자체 버전을 따로 가진다([PINNED.json](skills/korean-protocol/PINNED.json)).
 KP 사본을 바꾸면 Conductor 버전도 올린다.
 
+KP 사본은 KP 저장소의 릴리스 태그에서 만든다. 손으로 고치지 않는다.
+
+```sh
+python3 tools/sync_kp.py --repo <KP 저장소 경로나 주소> --tag vX.Y.Z --dry-run
+python3 tools/sync_kp.py --repo <KP 저장소 경로나 주소> --tag vX.Y.Z
+```
+
+이미 설치한 사용자는 `cx kp status --remote`로 새 KP를 확인하고 `cx kp update`로 바꾼다.
+
+이전 사본은 git 기록에 남는다. KP 버전 문자열은 아래 파일에도 있다. 함께 고친다.
+
+- `README.md`의 라이선스 절
+- `NOTICE.md`
+- `DESIGN.md`의 저장소 구조
+- `skills/kp-conductor/scripts/kp_lint.py`의 `BASIS`
+
 진입 블록(`references/entry-block.md`)이 바뀌면 기존 설치는 `entry: outdated`가 된다.
-KP 버전 문자열이 바뀌어도 같다.
 이때는 릴리스 노트에 `### 호환성 변경` 절을 두고 `cx entry install` 재실행을 적는다.
+
+진입 블록에는 KP 버전을 적지 않는다. KP를 바꿔도 진입 블록은 그대로다.
 
 ## 버전을 적는 곳
 

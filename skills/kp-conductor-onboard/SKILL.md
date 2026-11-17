@@ -147,6 +147,9 @@ python3 ~/.codex/skills/kp-conductor/scripts/conductor.py
    `entry=agents_md`이면 전역 `AGENTS.md`에 표지 블록을 설치한다.
    `cx doctor`와 `cx status`로 결과를 확인한다.
 
+   `cx skills-suggest`로 비어 있는 경로를 보여 준다.
+   설치는 2단계와 같이 사용자 동의를 받은 뒤 원본 안내를 따른다.
+
    실패하면 실패 항목과 다음 조치를 보고한다.
    실패를 설치 완료로 표시하지 않는다.
 

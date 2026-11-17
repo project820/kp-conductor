@@ -286,7 +286,8 @@ def validate_settings(data):
             raise SystemExit('invalid settings: ' + key)
     if data.get('entry', 'agents_md') not in ('agents_md', 'none'):
         raise SystemExit('invalid settings entry')
-    if not isinstance(data.get('retro', {}), dict) or data.get('retro', {}).get('apply', 'propose') not in ('propose', 'notify'):
+    # off: this computer only receives the engine; another computer runs the retrospective.
+    if not isinstance(data.get('retro', {}), dict) or data.get('retro', {}).get('apply', 'propose') not in ('propose', 'notify', 'off'):
         raise SystemExit('invalid settings retro.apply')
     thresholds = data.get('thresholds', {})
     if not isinstance(thresholds, dict) or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v < float('inf') for v in thresholds.values()):
@@ -1124,8 +1125,23 @@ def load_routing(path=None, data=None):
         if 'sufficient' in route and (not strings(route['sufficient']) or not route['sufficient']
                                       or not set(route['sufficient']) <= set(route['keywords'])):
             invalid()
+        # Optional veto. A matched exclude keyword turns the route off, e.g. "플로우차트" for the chart keyword "차트".
+        if 'exclude' in route and (not strings(route['exclude']) or not route['exclude']
+                                   or set(route['exclude']) & set(route['keywords'])):
+            invalid()
         identifiers.add(route['id'])
     return data
+
+
+def keyword_found(keyword, text):
+    if keyword.isascii():
+        return re.search(r'(?<![A-Za-z0-9])' + re.escape(keyword) + r'(?![A-Za-z0-9])', text, re.I | re.ASCII)
+    pattern = re.escape(keyword.lower())
+    if re.match(r'[A-Za-z0-9]', keyword[0]):
+        pattern = r'(?<![A-Za-z0-9])' + pattern
+    if re.match(r'[A-Za-z0-9]', keyword[-1]):
+        pattern += r'(?![A-Za-z0-9])'
+    return re.search(pattern, text.lower(), re.ASCII)
 
 
 def route_matches(text, routing, roles, skills, top=3, disabled=None):
@@ -1140,21 +1156,10 @@ def route_matches(text, routing, roles, skills, top=3, disabled=None):
             paths.setdefault(name, path)
     results = []
     for route in routing['routes']:
-        matched = []
-        for keyword in dict.fromkeys(route['keywords']):
-            if keyword.isascii():
-                found = re.search(r'(?<![A-Za-z0-9])' + re.escape(keyword) + r'(?![A-Za-z0-9])',
-                                  text, re.I | re.ASCII)
-            else:
-                pattern = re.escape(keyword.lower())
-                if re.match(r'[A-Za-z0-9]', keyword[0]):
-                    pattern = r'(?<![A-Za-z0-9])' + pattern
-                if re.match(r'[A-Za-z0-9]', keyword[-1]):
-                    pattern += r'(?![A-Za-z0-9])'
-                found = re.search(pattern, text.lower(), re.ASCII)
-            if found:
-                matched.append(keyword)
+        matched = [keyword for keyword in dict.fromkeys(route['keywords']) if keyword_found(keyword, text)]
         if not matched or not route_gate_open(route, matched):
+            continue
+        if any(keyword_found(keyword, text) for keyword in route.get('exclude', [])):
             continue
         allowed = roles.get(route['role'], {}).get('skills', [])
         resolved = []
@@ -1281,10 +1286,46 @@ def duplicate_skills(home):
     return duplicates
 
 
+def installed_skill_commit(name, directory, installation, records, origin_url):
+    if origin_url:
+        for parent in (directory.resolve(), *directory.resolve().parents):
+            marker = parent / '.git'
+            if not marker.exists():
+                continue
+            gitdir = marker
+            if marker.is_file():
+                text = marker.read_text().strip()
+                gitdir = parent / text[8:] if text.startswith('gitdir: ') else marker
+            # An empty .git directory is not a work tree (nor a usable HEAD).
+            if (gitdir / 'HEAD').is_file():
+                commit = (run(['git', '-C', str(directory), 'rev-parse', 'HEAD']) or '').strip()
+                if re.fullmatch(r'(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})', commit):
+                    return commit
+            break
+    commit = installation.get('source_commit')
+    if isinstance(commit, str) and commit:
+        return commit
+    if isinstance(records, dict):
+        records = records.get('skills', records)
+    if isinstance(records, dict):
+        entry = records.get(name, records.get(directory.name, {}))
+    elif isinstance(records, list):
+        entry = next((row for row in reversed(records) if isinstance(row, dict)
+                      and row.get('name') in (name, directory.name)), {})
+    else:
+        entry = {}
+    if isinstance(entry, dict):
+        commit = entry.get('commit') or entry.get('source_commit')
+        if isinstance(commit, str):
+            return commit
+    return ''
+
+
 def skills_audit(days=30, stale_days=30, remote=False, home=None, sessions=None, routing_path=None):
     home = Path(home) if home else user_home()
     lock = read_json(home / '.agents' / '.skill-lock.json', {})
     locked = lock.get('skills', {})
+    installed_records = read_json(state() / 'skills-installed.json', {})
     disabled_names, disabled_paths = disabled_skills(home)
     installed = role_skills(home)
     performance = skill_performance(days)
@@ -1310,6 +1351,12 @@ def skills_audit(days=30, stale_days=30, remote=False, home=None, sessions=None,
         installation = {} if native else read_json(directory / 'INSTALLATION.json', {})
         linked = linked_paths.get(path)
         origin_url = '' if native else skill_origin(directory, origins)
+        # A git checkout's HEAD only describes the source when it is the repository the audit compares with.
+        lock_url = metadata.get('sourceUrl') or ''
+        same_repository = not lock_url or same_git_url(lock_url, origin_url)
+        installed_commit = installed_skill_commit(name, directory,
+            read_json(directory / 'INSTALLATION.json', {}) if native else installation,
+            installed_records, (skill_origin(directory, origins) if native else origin_url) if same_repository else '')
         source = metadata.get('source') or metadata.get('sourceUrl') or linked or origin_url
         if not source and installation:
             source = installation.get('source') or installation.get('release') or 'INSTALLATION.json'
@@ -1323,11 +1370,13 @@ def skills_audit(days=30, stale_days=30, remote=False, home=None, sessions=None,
         row = skills.setdefault(name, {'name': name, 'source': source or '', 'origin': origin, 'paths': [],
             'modified_at': '', 'modified_timestamp': modified, 'user_calls': explicit.get(name, 0),
             'agent_reads': reads.get(name, 0), 'mcp_calls': sum(mcp.get(server, 0) for server in servers),
-            'disabled': False, 'banned': False,
+            'disabled': False, 'banned': False, 'installed_commit': '',
             'fit': performance.get(name, dict.fromkeys(('good', 'poor', 'none', 'unrecorded'), 0))})
         # Preserve provenance when another installed alias has an external source.
         if origin == 'external' or origin == 'local' and row['origin'] == 'native':
             row['origin'], row['source'] = origin, source or ''
+        if installed_commit and (origin == 'external' or not row['installed_commit']):
+            row['installed_commit'] = installed_commit
         row['paths'].append(str(directory))
         row['modified_timestamp'] = max(row['modified_timestamp'], modified)
         row['disabled'] |= disabled
@@ -1350,7 +1399,16 @@ def skills_audit(days=30, stale_days=30, remote=False, home=None, sessions=None,
     duplicates = duplicate_skills(home)
     different = {row['name'] for row in duplicates if not row['same']}
     counts = dict.fromkeys(('review', 'review-duplicate', 'banned', 'disabled', 'keep', 'local', 'native'), 0)
+    if remote:
+        counts['update_available'] = 0
     for row in skills.values():
+        if remote:
+            commits = (row['installed_commit'], row['upstream_head'])
+            if all(re.fullmatch(r'(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})', value) for value in commits):
+                row['update'] = 'current' if commits[0].lower() == commits[1].lower() else 'available'
+            else:
+                row['update'] = '미확인'
+            counts['update_available'] += row['update'] == 'available'
         modified = row.pop('modified_timestamp')
         row['modified_at'] = datetime.datetime.fromtimestamp(modified).astimezone().isoformat(timespec='seconds')
         banned = row.pop('banned')
@@ -1384,9 +1442,12 @@ def skills_status():
     if not audit:
         return 'skills: not audited'
     counts = audit.get('counts', {})
-    return 'skills: %d review, %d review-duplicate, %d banned, %d duplicates, native %d, local %d' % (
+    result = 'skills: %d review, %d review-duplicate, %d banned, %d duplicates, native %d, local %d' % (
         counts.get('review', 0), counts.get('review-duplicate', 0), counts.get('banned', 0),
         counts.get('duplicates', 0), counts.get('native', 0), counts.get('local', 0))
+    if counts.get('update_available', 0) > 0:
+        result += ', %d update available' % counts['update_available']
+    return result
 
 
 def command_skills_audit(args):
@@ -1400,15 +1461,15 @@ def command_skills_audit(args):
     if args.json:
         print(json.dumps(audit, ensure_ascii=False, indent=1))
         return
-    print('| 스킬 | 출처 | origin | 로컬 최종 수정 | 사용자 호출 | 에이전트 읽기 | mcp_calls | 성과(g/p/n/-) | 비활성화 | 판정 | reason |' + (' upstream HEAD |' if args.remote else ''))
-    print('|---|---|---|---|---|---|---|---|---|---|---|' + ('---|' if args.remote else ''))
+    print('| 스킬 | 출처 | origin | 로컬 최종 수정 | 사용자 호출 | 에이전트 읽기 | mcp_calls | 성과(g/p/n/-) | 비활성화 | 판정 | reason |' + (' upstream HEAD | installed | update |' if args.remote else ''))
+    print('|---|---|---|---|---|---|---|---|---|---|---|' + ('---|---|---|' if args.remote else ''))
     for row in audit['skills']:
         cells = [row['name'], row['source'], row['origin'], row['modified_at'], row['user_calls'],
                  row['agent_reads'], row['mcp_calls'],
                  '/'.join(str(row['fit'][key]) for key in ('good', 'poor', 'none', 'unrecorded')),
                  row['disabled'], row['verdict'], row['reason']]
         if args.remote:
-            cells.append(row['upstream_head'])
+            cells.extend((row['upstream_head'], row['installed_commit'], row['update']))
         print('| ' + ' | '.join(str(cell).replace('|', '\\|').replace('\n', ' ') for cell in cells) + ' |')
     print('\n## duplicates\n| 스킬 | 같은 내용 | 경로 | realpath | SKILL.md sha256 | 비활성화 |\n|---|---|---|---|---|---|')
     for duplicate in audit['duplicates']:
@@ -2759,6 +2820,8 @@ def resolve_skill_target(home, value):
 
 
 def command_skills(args):
+    if args.action == 'delete':
+        return command_skills_delete(args)
     home = user_home()
     path = user_file(home / '.codex/config.toml')
     expected = file_hash(path)
@@ -2792,6 +2855,121 @@ def command_skills(args):
     with change_units({'config.toml': path}):
         atomic_write(path, updated, expected)
     print('skills %s: %s' % (args.action, target))
+
+
+def command_skills_delete(args):
+    """Remove only an approved external skill; retain a recoverable copy."""
+    if not args.target:
+        raise SystemExit('skills delete requires a skill name or SKILL.md path')
+    home = lexical_path(user_home())
+    skill_file = lexical_path(resolve_skill_target(home, args.target))
+    directory = skill_file.parent
+    roots = (home / '.codex/skills', home / '.agents/skills')
+    native = (home / '.codex/skills/.system', home / '.codex/plugins/cache')
+    protected = (*ENGINE_SKILLS, 'korean-protocol')
+    all_roots = roots + tuple(root.resolve() for root in roots)
+
+    def parts_below_root(path):
+        for root in all_roots:
+            if root in path.parents:
+                return path.relative_to(root).parts
+        return (path.name,)
+    # Any folder inside a protected skill (for example kp-conductor/references/x) is protected too.
+    if any(part in protected for candidate in (directory, directory.resolve()) for part in parts_below_root(candidate)):
+        raise SystemExit('refusing to delete a protected skill: ' + str(directory))
+    if any(root == candidate or root in candidate.parents for root in native
+           for candidate in (directory, directory.resolve())):
+        raise SystemExit('refusing to delete a native skill: ' + str(directory))
+    if not any(root in directory.parents for root in roots):
+        raise SystemExit('refusing to delete a skill outside skill roots: ' + str(directory))
+    owned_path(directory.parent)
+    if skill_file.name != 'SKILL.md' or not skill_file.is_file():
+        raise SystemExit('skill not found: ' + str(skill_file))
+    linked = directory.is_symlink()
+    link_target = os.readlink(directory) if linked else None
+    copy = None
+    if not linked:
+        owned_path(directory)
+        stamp = now()
+        copy = owned_path(state() / 'backups' / ('skills-deleted-' + stamp.strftime('%Y%m%d-%H%M%S')) / directory.name)
+        while copy.parent.exists():
+            stamp += datetime.timedelta(seconds=1)
+            copy = owned_path(state() / 'backups' / ('skills-deleted-' + stamp.strftime('%Y%m%d-%H%M%S')) / directory.name)
+    # Links elsewhere that point into this folder break when it moves; list them so the user can decide.
+    real = directory.resolve()
+    aliases = sorted(str(entry) for root in roots if root.is_dir() for entry in root.iterdir()
+                     if entry.is_symlink() and entry != directory
+                     and (entry.resolve() == real or real in entry.resolve().parents)) if not linked else []
+    print('delete plan: ' + str(directory))
+    if linked:
+        print('symlink only: %s -> %s' % (directory, link_target))
+    else:
+        print('copy kept at: ' + str(copy))
+    for alias in aliases:
+        print('linked from: %s (이 링크는 끊어진다. 지울지는 사용자가 정한다)' % alias)
+    if args.dry_run:
+        return
+    if not args.yes:
+        raise SystemExit('skills delete requires --yes after the user approved the deletion')
+    config = owned_path(home / '.codex/config.toml')
+    expected = file_hash(config)
+    text = config.read_bytes().decode('utf-8') if config.exists() else ''
+    ours = {row[2] for row in owned_skill_offs(text)[1]}
+    resolved = skill_file.resolve()
+    keep_off = set()
+    if linked:
+        # Only the link goes away; entries for the same target through another path stay off.
+        matching = {item for item in ours if lexical_path(Path(item).expanduser()) == skill_file}
+        # Codex resolves the path of an off entry, so the link's entry also kept the target off.
+        # When that target stays installed in a skill root, move the entry to the target path.
+        target_in_roots = any(root in resolved.parents for root in all_roots)
+        already_off = any(Path(item).expanduser().resolve() == resolved for item in ours - matching)
+        if matching and target_in_roots and resolved.is_file() and not already_off:
+            keep_off = {str(resolved)}
+    else:
+        matching = {item for item in ours if Path(item).expanduser().resolve() == resolved}
+    log = owned_path(state() / 'skills-deleted.jsonl')
+    log_expected = file_hash(log)
+    previous = log.read_bytes() if log.exists() else b''
+    record = {'ts': now().isoformat(timespec='seconds'), 'name': directory.name, 'path': str(directory)}
+    record['symlink_target' if linked else 'moved_to'] = link_target if linked else str(copy)
+    with change_units({'config.toml': config}):
+        owned_path(directory.parent)
+        if linked:
+            if not directory.is_symlink() or os.readlink(directory) != link_target:
+                raise SystemExit('skill symlink changed: ' + str(directory))
+            directory.unlink()
+        else:
+            owned_path(directory)
+            owned_path(copy)
+            copy.parent.mkdir(parents=True, exist_ok=False)
+            shutil.move(str(directory), str(copy))
+        try:
+            if matching:
+                updated = skills_region_candidate(text, (ours - matching) | keep_off)
+                atomic_write(config, updated, expected)
+            atomic_write(log, previous + (json.dumps(record, ensure_ascii=False) + '\n').encode('utf-8'), log_expected)
+        except BaseException:
+            owned_path(directory.parent)
+            if directory.exists() or directory.is_symlink():
+                raise SystemExit('cannot restore skill; path changed: ' + str(directory))
+            if linked:
+                directory.symlink_to(link_target, target_is_directory=True)
+            else:
+                owned_path(directory)
+                owned_path(copy)
+                shutil.move(str(copy), str(directory))
+            raise
+    print('skills delete: %s (복구용 사본: %s)' % (directory, copy if copy else '없음; symlink only'))
+    for path in sorted(keep_off):
+        print('kept off: ' + path)
+
+
+def same_git_url(first, second):
+    def normal(url):
+        url = (url or '').strip().rstrip('/')
+        return url[:-4] if url.endswith('.git') else url
+    return bool(first) and bool(second) and normal(first) == normal(second)
 
 
 # ---- maintainer: install and deploy the engine from a local checkout -------
@@ -2901,7 +3079,7 @@ def engine_command(*arguments):
 
 def receive_engine(source_root, stamp, commit=None):
     source_root = Path(source_root)
-    folders = list(ENGINE_FOLDERS) + ([] if (user_home() / '.agents/skills/korean-protocol').exists() else ['korean-protocol'])
+    folders = list(ENGINE_FOLDERS) + kp_receive_folders(source_root)
     record = owned_path(state() / 'engine.json')
     expected = file_hash(record)
     installed = read_json(record, {}) if record.exists() else {}
@@ -3153,6 +3331,78 @@ def aa_refresh(extra_slugs):
     return target, rows, failed, aa_diff(reference, rows)
 
 
+# ---- skill suggestions: gaps and weak routes in this user's skill pool ------
+
+def skills_suggest(days=30, home=None):
+    """Suggest from routing coverage and recorded fit; never install skills."""
+    if days < 0:
+        raise SystemExit('days must be nonnegative')
+    home = Path(home) if home is not None else user_home()
+    skills = role_skills(home)
+    installed = {name for name, _ in skills}
+    disabled_names, disabled_paths = disabled_skills(home)
+    enabled = {name for name, path in skills
+               if name not in disabled_names and str(Path(path).resolve()) not in disabled_paths
+               and str(Path(path).parent.resolve()) not in disabled_paths}
+    routes = load_routing()['routes']
+    gaps = []
+    for route in routes:
+        if route['id'] == 'conductor-setup' or any(name in enabled for name in route['skills']):
+            continue
+        if not route['skills']:
+            # Some default routes list no skill on purpose (research uses search tools); report them
+            # only when a recommended tool exists for the route.
+            if not missing_recommended(route['id'], installed):
+                continue
+            reason = 'route lists no skills'
+        elif any(name in installed for name in route['skills']):
+            reason = 'installed but disabled'
+        else:
+            reason = 'no skill installed'
+        recommended = []
+        for pack in missing_recommended(route['id'], installed):
+            install = pack.get('install') or {}
+            recommended.append({'name': pack.get('name'), 'source': pack.get('source'),
+                                'install': install.get('command') or install.get('how') or pack.get('source')})
+        gaps.append({'route': route['id'], 'label': route['label'], 'reason': reason, 'recommended': recommended})
+    weak = []
+    for name, values in sorted(skill_performance(days).items()):
+        poor, good = values.get('poor', 0), values.get('good', 0)
+        if poor >= 2 and poor > good:
+            weak.append({'skill': name, 'poor': poor, 'good': good,
+                         'routes': [route['id'] for route in routes if name in route['skills']]})
+    return {'ts': now().isoformat(timespec='seconds'), 'days': days, 'gaps': gaps, 'weak': weak}
+
+
+def suggest_table_row(cells):
+    return '| ' + ' | '.join(str(cell).replace('|', '\\|').replace('\n', ' ').replace('\r', ' ')
+                              for cell in cells) + ' |'
+
+
+def command_skills_suggest(args):
+    """cx skills-suggest [--days N] [--json]: propose skills the user lacks; never installs."""
+    suggestion = skills_suggest(args.days)
+    directory = owned_path(state() / 'audits')
+    target = directory / ('suggest-' + now().strftime('%Y%m%d') + '.json')
+    content = json.dumps(suggestion, ensure_ascii=False, indent=1)
+    atomic_write(target, content)
+    if args.json:
+        print(content)
+        return
+    print('skills-suggest: %d gaps, %d weak' % (len(suggestion['gaps']), len(suggestion['weak'])))
+    print('| 경로 | 이름 | 이유 | 권장 설치 |')
+    print('|---|---|---|---|')
+    for gap in suggestion['gaps']:
+        recommended = '; '.join('%s: %s' % (pack['name'], pack['install']) for pack in gap['recommended'])
+        print(suggest_table_row([gap['route'], gap['label'], gap['reason'], recommended or '-']))
+    print('| 스킬 | poor | good | 경로 |')
+    print('|---|---|---|---|')
+    for weak in suggestion['weak']:
+        print(suggest_table_row([weak['skill'], weak['poor'], weak['good'], ', '.join(weak['routes']) or '-']))
+    print('note: 제안만 한다. 설치는 사용자 동의 뒤 원본 안내를 따른다.')
+    print('saved: ' + str(target))
+
+
 # ---- commands --------------------------------------------------------------
 
 def command_status(args):
@@ -3182,7 +3432,8 @@ def command_status(args):
     except (TypeError, ValueError):
         since = None
     # The first retro is due a week after onboarding, so a fresh install does not start with one.
-    print('retro: ' + ('ok, first run in %d days' % (7 - since) if days is None and since is not None and since < 7
+    print('retro: ' + ('off' if load_settings()['retro']['apply'] == 'off'
+                       else 'ok, first run in %d days' % (7 - since) if days is None and since is not None and since < 7
                        else 'never run, due' if days is None
                        else 'due, last run %d days ago' % days if days >= 7 else 'ok, last run %d days ago' % days))
     print(skills_status())
@@ -3247,6 +3498,8 @@ def command_profile(args):
 def command_retro(args):
     if args.sample < 0:
         raise SystemExit('sample must be nonnegative')
+    if load_settings()['retro']['apply'] == 'off':
+        raise SystemExit('retro.apply=off: 이 컴퓨터에서는 회고하지 않는다. 엔진을 관리하는 컴퓨터에서 실행한다')
     report = retro_report(args.days)
     directory = state() / 'retro'
     owned_path(directory)
@@ -3418,6 +3671,181 @@ def command_doctor(args):
     raise SystemExit(1 if problems else 0)
 
 
+# ---- Korean Protocol copy: status and update from the KP release ----------
+
+KP_TAG = re.compile(r'v(0|[1-9][0-9]*)[.](0|[1-9][0-9]*)[.](0|[1-9][0-9]*)')
+KP_REQUIRED = ('LICENSE', 'NOTICE.md', 'lexicon/core.json',
+               'lexicon/domains/software.json', 'specification/rules.json')
+KP_NOTE = 'Conductor 패키지에 넣은 고정 사본이다. 내용을 고치지 않는다. 갱신은 KP 릴리스를 받아 통째로 바꾼다.'
+# A separate KP install may not record its source; its releases still come from the public KP repository.
+KP_SOURCE = 'https://github.com/project820/korean-protocol'
+
+
+def kp_build_copy(source_root, dest, version, commit, source_url):
+    """Build the vendored release without changing upstream or an installed copy."""
+    source_root = Path(source_root)
+    skill = source_root / 'skills' / 'korean-protocol'
+    for relative in ('skills/korean-protocol/SKILL.md',) + KP_REQUIRED:
+        if not (source_root / relative).is_file():
+            raise SystemExit('KP required file missing: ' + relative)
+    # A symlink in the release could pull files from outside the checkout into the bundle.
+    candidates = [skill] + [source_root / relative for relative in KP_REQUIRED]
+    for top, directories, files in os.walk(str(skill)):
+        candidates.extend(Path(top) / name for name in directories + files)
+    for path in candidates:
+        for part in (path, *path.parents):
+            if part == source_root:
+                break
+            if part.is_symlink():
+                raise SystemExit('KP source contains a symlink: ' + str(part.relative_to(source_root)))
+    dest = owned_path(dest)
+    shutil.copytree(str(skill), str(dest), ignore=shutil.ignore_patterns('__pycache__'))
+    for relative in KP_REQUIRED:
+        target = owned_path(dest / relative)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(source_root / relative), str(target))
+    metadata = {'name': 'korean-protocol', 'version': version, 'source': source_url,
+                'source_commit': commit, 'release': source_url + '/releases/tag/' + version,
+                'license': 'MIT', 'note': KP_NOTE}
+    atomic_write(dest / 'PINNED.json', json.dumps(metadata, ensure_ascii=False, indent=1) + '\n')
+
+
+def kp_metadata(path, filename):
+    data = read_json(path / filename, {})
+    return data if isinstance(data, dict) else {}
+
+
+def kp_version_key(path):
+    version = kp_metadata(Path(path), 'PINNED.json').get('version')
+    return tuple(int(part) for part in version[1:].split('.')) if isinstance(version, str) and KP_TAG.fullmatch(version) else None
+
+
+def kp_receive_folders(source_root):
+    """Engine installs ship the repository's KP copy unless a newer or separate KP is installed."""
+    if (user_home() / '.agents/skills/korean-protocol').exists():
+        return []
+    installed = kp_version_key(user_home() / '.codex/skills/korean-protocol')
+    shipped = kp_version_key(Path(source_root) / 'korean-protocol')
+    if installed and shipped and installed > shipped:
+        # cx kp update already moved this computer ahead; an engine install must not roll it back.
+        print('kp: 설치된 KP v%s가 배포본 v%s보다 새로워 유지한다' % ('.'.join(map(str, installed)), '.'.join(map(str, shipped))))
+        return []
+    return ['korean-protocol']
+
+
+def kp_source(metadata, separate=False):
+    source = metadata.get('source')
+    if not isinstance(source, str) or not source.strip() or source.startswith('-'):
+        return None
+    if separate and not re.match(r'^(?:https?://|ssh://|git://|file://|[^/\s]+@[^/:\s]+:)', source):
+        return None
+    return source
+
+
+def kp_latest(source):
+    output = run(['git', 'ls-remote', '--tags', source]) if source else None
+    tags = set()
+    for line in (output or '').splitlines():
+        fields = line.split()
+        if len(fields) != 2 or not fields[1].startswith('refs/tags/'):
+            continue
+        tag = fields[1][len('refs/tags/'):]
+        if tag.endswith('^{}'):
+            tag = tag[:-3]
+        if KP_TAG.fullmatch(tag):
+            tags.add(tag)
+    return max(tags, key=lambda tag: tuple(int(part) for part in tag[1:].split('.'))) if tags else None
+
+
+def kp_clone(source, tag, dest):
+    if not isinstance(tag, str) or not KP_TAG.fullmatch(tag):
+        raise SystemExit('invalid KP release tag: ' + str(tag))
+    # git clone --branch also accepts a branch; require a real tag and the commit it points to.
+    listing = run(['git', 'ls-remote', '--tags', '--', source, 'refs/tags/' + tag, 'refs/tags/' + tag + '^{}'])
+    refs = dict(reversed(line.split()) for line in (listing or '').splitlines() if len(line.split()) == 2)
+    expected = refs.get('refs/tags/' + tag + '^{}') or refs.get('refs/tags/' + tag)
+    if not expected:
+        raise SystemExit('KP release tag not found: ' + tag)
+    if run(['git', 'clone', '--depth', '1', '--branch', tag, '--', source, str(dest)], timeout=120) is None:
+        raise SystemExit('KP clone failed: ' + tag)
+    commit = run(['git', '-C', str(dest), 'rev-parse', 'HEAD'])
+    if not commit or not re.fullmatch(r'[0-9a-f]{40,64}', commit.strip()):
+        raise SystemExit('KP commit could not be verified: ' + str(dest))
+    if commit.strip() != expected:
+        raise SystemExit('KP clone does not match release tag: ' + tag)
+    return commit.strip()
+
+
+def kp_replace(build, dest, backup):
+    build, dest, backup = owned_path(build), owned_path(dest), owned_path(backup)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if backup.exists():
+        raise SystemExit('KP backup already exists: ' + str(backup))
+    os.rename(str(dest), str(backup))
+    try:
+        os.rename(str(build), str(dest))
+    except BaseException:
+        os.rename(str(backup), str(dest))
+        raise
+
+
+def command_kp(args):
+    """Inspect KP installations or replace only the bundled release."""
+    bundled = user_home() / '.codex/skills/korean-protocol'
+    separate = user_home() / '.agents/skills/korean-protocol'
+    has_bundled, has_separate = bundled.is_dir(), separate.is_dir()
+    bundled_data = kp_metadata(bundled, 'PINNED.json')
+    separate_data = kp_metadata(separate, 'INSTALLATION.json')
+    active = 'bundled' if has_bundled else 'separate' if has_separate else 'none'
+    metadata = bundled_data if has_bundled else separate_data
+    version = metadata.get('version', 'unknown')
+    source = kp_source(metadata, separate=not has_bundled)
+    if args.action == 'status':
+        for name, path, present, data in (('bundled', bundled, has_bundled, bundled_data),
+                                           ('separate', separate, has_separate, separate_data)):
+            print('kp %s: %s' % (name, '%s %s' % (path, data.get('version', 'unknown')) if present else 'absent'))
+        print('kp active: ' + active)
+        if args.remote:
+            latest = kp_latest(source or (KP_SOURCE if active != 'none' else None))
+            if latest is None or not isinstance(version, str) or not KP_TAG.fullmatch(version):
+                result = '미확인'
+            else:
+                result = 'update available' if tuple(map(int, latest[1:].split('.'))) > tuple(map(int, version[1:].split('.'))) else 'current'
+            print('kp latest: %s (%s)' % (latest or 'unknown', result))
+        return
+    if not has_bundled:
+        if has_separate:
+            raise SystemExit('따로 설치한 KP는 그 저장소의 방법으로 갱신한다: ' + str(separate))
+        raise SystemExit('갱신할 KP 사본이 없다: ' + str(bundled))
+    tag = args.to or kp_latest(source)
+    if not tag:
+        raise SystemExit('KP 최신 릴리스를 확인하지 못했다')
+    if not KP_TAG.fullmatch(tag):
+        raise SystemExit('invalid KP release tag: ' + tag)
+    if tag == version:
+        print('kp update: 변경 없음 (%s)' % version)
+        return
+    if not source:
+        raise SystemExit('KP source is missing in PINNED.json: ' + str(bundled))
+    owned_path(bundled)
+    staging_root = owned_path(state() / 'staging')
+    staging_root.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='kp-' + now().strftime('%Y%m%d-%H%M%S-%f') + '-', dir=str(staging_root)))
+    try:
+        commit = kp_clone(source, tag, staging / 'src')
+        build = staging / 'build'
+        kp_build_copy(staging / 'src', build, tag, commit, source)
+        if args.dry_run:
+            count = sum(path.is_file() for path in build.rglob('*'))
+            print('kp update dry-run: %s -> %s (%d files)' % (version, tag, count))
+            return
+        backup = state() / 'backups' / staging.name / 'korean-protocol'
+        kp_replace(build, bundled, backup)
+        print('kp update: %s -> %s (이전 사본: %s)' % (version, tag, backup))
+    finally:
+        shutil.rmtree(str(owned_path(staging)))
+
+
 def command_kp_lint(rest):
     script = SKILL / 'scripts' / 'kp_lint.py'
     raise SystemExit(subprocess.call([sys.executable, str(script)] + list(rest)))
@@ -3489,6 +3917,10 @@ def main(argv=None):
     audit.add_argument('--json', action='store_true')
     audit.add_argument('--remote', action='store_true')
     audit.set_defaults(handler=command_skills_audit)
+    suggest = sub.add_parser('skills-suggest')
+    suggest.add_argument('--days', type=int, default=30)
+    suggest.add_argument('--json', action='store_true')
+    suggest.set_defaults(handler=command_skills_suggest)
     route = sub.add_parser('route')
     route.add_argument('text')
     route.add_argument('--top', type=int, default=3)
@@ -3533,9 +3965,10 @@ def main(argv=None):
     config_parser.add_argument('--dry-run', action='store_true')
     config_parser.set_defaults(handler=command_config)
     skills_parser = sub.add_parser('skills')
-    skills_parser.add_argument('action', choices=('off', 'on', 'list'))
+    skills_parser.add_argument('action', choices=('off', 'on', 'list', 'delete'))
     skills_parser.add_argument('target', nargs='?')
     skills_parser.add_argument('--dry-run', action='store_true')
+    skills_parser.add_argument('--yes', action='store_true', help='delete only: the user approved this deletion')
     skills_parser.set_defaults(handler=command_skills)
     maintainer_parser = sub.add_parser('maintainer')
     maintainer_parser.add_argument('action', choices=('status', 'install', 'deploy', 'receive'))
@@ -3544,6 +3977,12 @@ def main(argv=None):
     maintainer_parser.add_argument('--host')
     maintainer_parser.add_argument('--dry-run', action='store_true')
     maintainer_parser.set_defaults(handler=command_maintainer)
+    kp_parser = sub.add_parser('kp')
+    kp_parser.add_argument('action', choices=('status', 'update'))
+    kp_parser.add_argument('--remote', action='store_true')
+    kp_parser.add_argument('--to')
+    kp_parser.add_argument('--dry-run', action='store_true')
+    kp_parser.set_defaults(handler=command_kp)
     args = parser.parse_args(raw)
     args.home = home_args.home
     previous = HOME_OVERRIDE
@@ -3553,7 +3992,8 @@ def main(argv=None):
                     or (args.command == 'entry' and args.action in ('install', 'remove'))
                     or (args.command == 'overlay' and args.action in ('backup', 'restore', 'verify'))
                     or (args.command == 'settings' and args.action == 'set')
-                    or (args.command == 'skills' and args.action in ('off', 'on'))
+                    or (args.command == 'skills' and args.action in ('off', 'on', 'delete'))
+                    or (args.command == 'kp' and args.action == 'update')
                     or (args.command == 'maintainer' and args.action in ('install', 'deploy', 'receive'))
                     or args.command in ('roles', 'uninstall', 'backup', 'config')) and not getattr(args, 'dry_run', False)
         if args.command == 'entry' and args.action == 'install':

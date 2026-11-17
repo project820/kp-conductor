@@ -170,6 +170,11 @@
     "매출 분석",
     "매출 추이"
    ],
+   "exclude": [
+    "플로우차트",
+    "순서도",
+    "흐름도"
+   ],
    "skills": [
     "data-analytics:index",
     "data-analytics:build-dashboard",

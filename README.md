@@ -93,7 +93,7 @@ flowchart TD
 | 도구 | 조건 | 역할 |
 |---|---|---|
 | Codex | 앱이나 CLI를 설치한다. | 스킬과 서브에이전트를 실행한다. |
-| OpenCodex | `ocx`와 연결 가능한 프록시를 준비한다. | 여러 공급사의 모델을 연결한다. |
+| [OpenCodex](https://github.com/lidge-jun/opencodex) | `ocx`와 연결 가능한 프록시를 준비한다. | 여러 공급사의 모델을 연결한다. |
 | 공급사 | 2개 이상 공급사를 연결한다. | 작업 모델과 검토 모델을 선택한다. |
 | Python | Python 3을 설치한다. | Conductor 명령을 실행한다. |
 | Git | 저장소를 복제할 수 있게 준비한다. | 설치 파일을 가져온다. |
@@ -206,6 +206,10 @@ Codex 앱의 자동화 도구가 있으면 주 1회 예약을 제안한다.
 
 도구가 없으면 `cx status`의 `retro: due`를 실행 계기로 사용한다.
 
+엔진을 다른 컴퓨터에서 배포받기만 하는 보조 컴퓨터는 회고를 끈다.
+`cx settings set retro.apply off`를 실행하면 `cx status`가 `retro: off`를 보인다.
+`cx retro`도 실행을 거절한다.
+
 개인 설정을 고치기 전에는 `cx overlay backup`으로 받은 ID를 적는다.
 고친 뒤에는 `cx overlay verify --id <id>`를 실행한다.
 
@@ -213,6 +217,33 @@ Codex 앱의 자동화 도구가 있으면 주 1회 예약을 제안한다.
 
 `cx backup`의 백업에는 `config.toml` 사본이 들어간다.
 비밀값이 있을 수 있으므로 백업 폴더를 공유하지 않는다.
+
+## 스킬 점검과 제안
+
+주간 회고는 설치한 스킬도 점검한다.
+기본 설정(`retro.apply=propose`)에서는 모든 변경이 제안으로 남는다.
+
+| 점검 | 명령 | 결과 |
+|---|---|---|
+| 사용 빈도 | `cx skills-audit` | 30일간 안 쓰고 고치지도 않은 외부 스킬을 평가 대상으로 고른다. |
+| 원본 갱신 | `cx skills-audit --remote` | 원본의 최신 커밋이 설치본과 다르면 갱신 후보로 표시한다. |
+| 부족한 스킬 | `cx skills-suggest` | 켜진 스킬이 없는 작업 범주를 찾는다. 성과가 낮은 스킬도 찾는다. |
+| KP 새 버전 | `cx kp status --remote` | 포함한 KP 사본보다 새 릴리스가 있는지 확인한다. |
+
+도태된 스킬은 지우지 않고 끄는 것이 기본이다.
+기본 설정에서는 이 끄기도 제안으로 남는다. 끈 스킬은 `cx skills on`으로 다시 켠다.
+
+사용자가 삭제를 승인한 스킬만 지운다.
+복사로 설치한 스킬은 `<state>/backups/`에 사본을 남긴다. 링크로 설치한 스킬은 링크만 지우고 원본은 둔다.
+
+```sh
+cx skills off <스킬>
+cx skills delete <스킬> --dry-run
+cx skills delete <스킬> --yes
+```
+
+Codex 기본 스킬과 플러그인 스킬, Conductor와 KP는 지우지 않는다.
+부족한 스킬의 설치는 원본 안내를 따르며 사용자 동의를 받은 뒤 한다.
 
 ## 엔진 관리자(maintainer) 모드
 
@@ -275,7 +306,16 @@ cx status
 `cx status`에 `entry: outdated`가 나오면 `cx entry install`을 실행한다.
 그다음 `cx doctor`로 확인한다.
 
-릴리스 노트에 Korean Protocol 갱신이 있을 때만 `korean-protocol` 폴더도 같은 방법으로 바꾼다.
+포함한 Korean Protocol은 엔진과 따로 갱신한다.
+`cx kp status --remote`로 새 릴리스를 확인하고 `cx kp update`로 바꾼다.
+
+```sh
+cx kp status --remote
+cx kp update --dry-run
+cx kp update
+```
+
+이전 사본은 `<state>/backups/kp-<시각>/`에 남는다.
 `~/.agents/skills/korean-protocol`에 따로 설치한 KP는 그 저장소의 방법으로 갱신한다.
 
 ## 권장 도구

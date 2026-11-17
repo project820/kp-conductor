@@ -36,10 +36,10 @@ flowchart TD
 | `overlay` | 개인 설정의 present/absent를 확인한다. 없으면 기본 틀을 쓴다 |
 | `entry` | conductor 블록의 present/absent/outdated를 확인한다 |
 | `onboarding` | `needed`이면 세션에서 한 번 "$kp-conductor-onboard로 설정하면 이 환경에 맞춰진다"고 알린다. 기본 틀로 계속한다 |
-| `retro_apply` | `propose`이면 회고 변경은 제안만 남긴다 |
+| `retro_apply` | `propose`이면 회고 변경은 제안만 남긴다. `off`이면 이 컴퓨터에서는 회고하지 않는다 |
 | `checkpoint` | 같은 프로젝트의 미완료 작업이 현재 요청과 같으면 알리고 이어서 진행한다 |
 | `profile` | `none`이면 균형을 쓴다. `saving=true`이면 절약 상태를 적용한다 |
-| `retro`, `lineup` | 회고 기한이나 모델 변화가 있으면 현재 요청 뒤 retrospective.md를 따른다 |
+| `retro`, `lineup` | 회고 기한이나 모델 변화가 있으면 현재 요청 뒤 retrospective.md를 따른다. `retro: off`이면 회고와 신규 모델 반영을 모두 건너뛴다 |
 
 ## 매 요청: 분류
 
@@ -247,5 +247,6 @@ L1 코어 작성 규칙은 전역 AGENTS.md의 conductor 블록에 있다. 사�
 - 병렬 2개 이상·경쟁 실행 전에는 [parallel.md](references/parallel.md)를 읽는다.
 - 비주얼 트랙은 [visual.md](references/visual.md), 분야·스킬 선택은 [resources.md](references/resources.md)를 읽는다.
 - 회고·신규 모델은 [retrospective.md](references/retrospective.md)를 읽는다. 개인 설정만 수정하며 엔진은 upstream 제안으로 남긴다. settings에 `maintainer`가 있고 `retro.apply=notify`이면 엔진 변경을 로컬 저장소에 반영한다.
-- 스킬 수명 주기와 중복 감사는 [skills-lifecycle.md](references/skills-lifecycle.md)를 읽는다.
+- 스킬 수명 주기와 중복 감사, 부족한 스킬 제안은 [skills-lifecycle.md](references/skills-lifecycle.md)를 읽는다. 스킬 삭제는 사용자가 명시 승인한 때만 한다.
+- KP 사본의 새 버전은 `cx kp status --remote`로 확인한다. 갱신은 사용자 승인 뒤 `cx kp update`로 한다.
 - 온보딩·규칙 변경 검증은 [regression.md](references/regression.md)의 시범 요청을 쓴다.

@@ -779,6 +779,28 @@ class ConductorTests(unittest.TestCase):
             with self.assertRaisesRegex(SystemExit, 'invalid routing definitions'):
                 cx.load_routing(path)
 
+    def test_route_exclude_keyword_turns_a_matched_route_off(self):
+        home = Path(self.home.name)
+        self.write_routing([self.route_definition('data', keywords=['차트', '대시보드'], exclude=['플로우차트', '흐름도'])])
+        def ids(text):
+            with patch.object(cx.Path, 'home', return_value=home), contextlib.redirect_stdout(io.StringIO()) as output:
+                cx.main(['route', text, '--json'])
+            return [row['id'] for row in json.loads(output.getvalue())]
+        self.assertEqual(ids('매출 차트 그려줘'), ['data'])
+        # "차트" sits inside "플로우차트"; the exclude keyword vetoes the route.
+        self.assertEqual(ids('README 플로우차트 고치기'), [])
+        self.assertEqual(ids('대시보드 흐름도 정리'), [])
+        for exclude in ([], ['차트'], 'x', [1]):
+            path = self.write_routing([self.route_definition('data', keywords=['차트'], exclude=exclude)])
+            with self.assertRaisesRegex(SystemExit, 'invalid routing definitions'):
+                cx.load_routing(path)
+
+    def test_shipped_routing_keeps_flowchart_requests_out_of_data(self):
+        routing = cx.load_routing(SCRIPT.parent.parent / 'references' / 'routing.json')
+        ids = lambda text: [row['id'] for row in cx.route_matches(text, routing, {}, [])]
+        self.assertNotIn('data', ids('README 플로우차트 고치기'))
+        self.assertIn('data', ids('매출 차트 만들어줘'))
+
     def test_shipped_routing_sends_screen_ai_look_to_unslop_and_text_to_korean_writing(self):
         routing = cx.load_routing(SCRIPT.parent.parent / 'references' / 'routing.json')
         def first(text):
@@ -1421,6 +1443,8 @@ class PublicContractTests(unittest.TestCase):
     def test_settings_allow_only_documented_keys(self):
         self.cli('settings', 'set', 'retro.apply', 'notify')
         self.assertEqual(json.loads(self.cli('settings', 'show'))['retro']['apply'], 'notify')
+        self.cli('settings', 'set', 'retro.apply', 'off')
+        self.assertEqual(json.loads(self.cli('settings', 'show'))['retro']['apply'], 'off')
         for key, value in [('quota', '[]'), ('entry', 'invalid'), ('retro.apply', 'unsafe')]:
             with self.assertRaises(SystemExit):
                 self.cli('settings', 'set', key, value)
@@ -1617,6 +1641,15 @@ class PublicContractTests(unittest.TestCase):
         with patch.object(cx, 'live_models', return_value=None), patch.object(cx, 'run', return_value=None):
             output = self.cli('status', '--project', str(self.home))
         self.assertIn('retro: never run, due', output)
+        # A computer that only receives the engine turns its retrospective off.
+        self.local('settings.json', {'onboarding': {'method': 'B', 'date': old}, 'retro': {'apply': 'off'}})
+        with patch.object(cx, 'live_models', return_value=None), patch.object(cx, 'run', return_value=None):
+            output = self.cli('status', '--project', str(self.home))
+        self.assertIn('retro: off', output)
+        self.assertIn('retro_apply: off', output)
+        with self.assertRaisesRegex(SystemExit, 'retro.apply=off'):
+            self.cli('retro', '--days', '7')
+        self.assertFalse((Path(os.environ['CONDUCTOR_HOME']) / 'retro' / 'last.json').exists())
 
     def test_overlay_restore_selected_snapshot_and_ignores_unmanaged_files(self):
         path = self.local('settings.json', {'language': 'en'})
@@ -2940,6 +2973,28 @@ class SkillsMaintainerTests(unittest.TestCase):
         self.assertEqual(protocol.read_bytes(), original)
         record = json.loads((self.state / 'engine.json').read_text())
         self.assertEqual(record['folders'], ['kp-conductor', 'kp-conductor-onboard'])
+
+    def test_maintainer_install_keeps_a_newer_kp_from_cx_kp_update(self):
+        self.repository()
+        (self.repo / 'skills/korean-protocol/PINNED.json').write_text(json.dumps({'version': 'v0.11.1'}))
+        installed = self.skill_file('korean-protocol', root='.codex/skills')
+        (installed.parent / 'PINNED.json').write_text(json.dumps({'version': 'v0.12.0'}))
+        before = self.snapshot(installed.parent)
+        self.cli('maintainer', 'install')
+        self.assertEqual(self.snapshot(installed.parent), before)
+        record = json.loads((self.state / 'engine.json').read_text())
+        self.assertEqual(record['folders'], ['kp-conductor', 'kp-conductor-onboard'])
+        # An older or equal installed copy is replaced by the repository copy as before.
+        (installed.parent / 'PINNED.json').write_text(json.dumps({'version': 'v0.10.0'}))
+        self.engine_record()
+        self.cli('maintainer', 'install')
+        self.assertEqual(json.loads((installed.parent / 'PINNED.json').read_text())['version'], 'v0.11.1')
+        # Versions compare as numbers: v0.9.0 is older than v0.11.1 although it sorts later as text.
+        (installed.parent / 'PINNED.json').write_text(json.dumps({'version': 'v0.9.0'}))
+        self.engine_record()
+        self.cli('maintainer', 'install')
+        self.assertEqual(json.loads((installed.parent / 'PINNED.json').read_text())['version'], 'v0.11.1')
+        self.assertEqual(cx.kp_version_key(installed.parent), (0, 11, 1))
 
     def test_maintainer_install_engine_failure_restores_previous_folders_and_cleans_staging(self):
         self.repository()
