@@ -3,6 +3,27 @@
 KP Conductor의 버전별 릴리스 노트다.
 규칙은 [RELEASING.md](RELEASING.md)를 따른다.
 
+## [0.4.0] - 2026-11-19
+
+### 추가
+
+- 진입 블록에 "웹 검색 실패 대응" 절을 넣었다. 내장 `web_search`가 실패하면 Parallel, Firecrawl 순서로 같은 질의를 다시 보낸다. 모두 실패하면 실패한 질의와 오류 문구를 보고한다.
+- `cx doctor`가 OpenCodex 웹 검색 사이드카 설정을 점검한다. Codex 경로와 Claude Code 경로를 따로 보인다. Anthropic 사이드카이면 경고와 전환 명령을 보인다.
+- `cx status`에 웹 검색 사이드카 줄을 넣었다.
+- 역할 정의(`roles.json`)에 선택 항목 `service_tier`(`default`, `fast`, `flex`)를 추가했다. `cx roles sync`가 이 값을 역할 파일에 쓴다. 전역 `service_tier`가 `fast`여도 `default`를 적은 역할은 일반 등급으로 돈다.
+- README에 웹 검색 사이드카 권장 모델 절을 넣었다.
+
+### 변경
+
+- `cx doctor`의 역할 선언 검사가 모델과 강도에 더해 sandbox와 `service_tier`도 비교한다. 다르면 `cx roles sync` 재실행을 안내한다.
+- `cx onboard propose`가 현재 역할 정의에 적힌 `service_tier`를 이어받는다.
+- `cx status`의 roles 줄에 선언한 `service_tier`를 `tier=` 형식으로 보인다.
+
+### 호환성 변경
+
+- 진입 블록 문구가 바뀌어 `cx status`가 `entry: outdated`를 보인다. `cx entry install`을 다시 실행한다.
+
+
 ## [0.3.0] - 2026-11-17
 
 ### 추가
