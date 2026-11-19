@@ -39,6 +39,7 @@ flowchart TD
 | `retro_apply` | `propose`이면 회고 변경은 제안만 남긴다. `off`이면 이 컴퓨터에서는 회고하지 않는다 |
 | `checkpoint` | 같은 프로젝트의 미완료 작업이 현재 요청과 같으면 알리고 이어서 진행한다 |
 | `profile` | `none`이면 균형을 쓴다. `saving=true`이면 절약 상태를 적용한다 |
+| `websearch` | 요청 경로별 검색 사이드카를 확인한다. `anthropic`이면 처음부터 Parallel로 찾고 전환 명령을 사용자에게 알린다 |
 | `retro`, `lineup` | 회고 기한이나 모델 변화가 있으면 현재 요청 뒤 retrospective.md를 따른다. `retro: off`이면 회고와 신규 모델 반영을 모두 건너뛴다 |
 
 ## 매 요청: 분류
@@ -241,6 +242,8 @@ L1 코어 작성 규칙은 전역 AGENTS.md의 conductor 블록에 있다. 사�
 요청마다 `cx route "<요청 한 줄 요약>"`을 한 번 실행한다. 진입 블록에서 실행했으면 재사용한다. 개인 지도는 `<state>/local/routing.json`, 없으면 패키지 routing.json이다.
 
 경로 선택과 스킬 분배는 [resources.md](references/resources.md)의 도구 선택을 따른다. 프로젝트 프로필은 같은 문서의 프로필 절차를 따른다.
+
+**웹 검색:** 내장 `web_search`가 실패하면 진입 블록의 "웹 검색 실패 대응"을 따른다. 검색 사이드카의 권장 설정은 README의 "웹 검색 사이드카" 절에 있다. `cx doctor`는 Anthropic 사이드카를 경고하고 전환 명령을 보여 준다.
 
 ## 더 읽을 것
 

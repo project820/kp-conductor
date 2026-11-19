@@ -3405,6 +3405,61 @@ def command_skills_suggest(args):
 
 # ---- commands --------------------------------------------------------------
 
+WEB_SEARCH_BACKENDS = ('anthropic', 'xai', 'gemini', 'exa')
+WEB_SEARCH_SWITCH = 'ocx agent sidecar web --backend openai --model gpt-6.1-terra --reasoning low'
+WEB_SEARCH_NOTES = {
+    'openai': ('OK  ', ''),
+    'gemini': ('OK  ', 'shares short-term quota with other Gemini models'),
+    'xai': ('INFO', 'response size cap can reject large search answers'),
+    'exa': ('INFO', ''),
+    'anthropic': ('WARN', '64KB response cap and per-request send budget reject most multi-search answers; '
+                          'switch: ' + WEB_SEARCH_SWITCH),
+    'disabled': ('WARN', 'web search sidecar is off'),
+    'unknown': ('WARN', 'OpenCodex config unreadable'),
+}
+
+
+def web_search_sidecar(block):
+    """OpenCodex runs a missing or unsupported backend as openai (resolveSidecarBackend)."""
+    if block.get('enabled') is False:
+        return 'disabled', 'default'
+    backend = block.get('backend') if block.get('backend') in WEB_SEARCH_BACKENDS else 'openai'
+    model = block.get('model')
+    return backend, model if isinstance(model, str) and model.strip() else 'default'
+
+
+def web_search_sidecars(home):
+    """Search sidecar per request path. Codex requests use the global block; Claude Code merges its override."""
+    config = read_json(Path(home) / '.opencodex' / 'config.json', None)
+    if not isinstance(config, dict):
+        return {'codex': ('unknown', 'unknown')}
+    block = config.get('webSearchSidecar')
+    block = block if isinstance(block, dict) else {}
+    paths = {'codex': web_search_sidecar(block)}
+    if 'claudeCode' in config:
+        section = config['claudeCode']
+        if not isinstance(section, dict):
+            paths['claude-code'] = ('unknown', 'unknown')
+        elif 'webSearchSidecar' in section:
+            override = section['webSearchSidecar']
+            paths['claude-code'] = (web_search_sidecar(dict(block, **override)) if isinstance(override, dict)
+                                    else ('unknown', 'unknown'))
+    return paths
+
+
+def doctor_web_search(paths):
+    for path, (backend, model) in paths.items():
+        level, note = WEB_SEARCH_NOTES[backend]
+        print('%s web search sidecar (%s): backend=%s model=%s%s' % (level, path, backend, model, '; ' + note if note else ''))
+
+
+def websearch_status(paths):
+    line = 'websearch: ' + '; '.join('%s %s/%s' % (path, backend, model) for path, (backend, model) in paths.items())
+    if any(backend == 'anthropic' for backend, _ in paths.values()):
+        line += ' (anthropic 사이드카는 검색이 자주 실패한다. 처음부터 Parallel을 쓰고 전환을 권한다: %s)' % WEB_SEARCH_SWITCH
+    return line
+
+
 def command_status(args):
     text = run([ocx_path(), 'provider', 'quota'], 20)
     quota, burn = parse_quota(text), quota_burn(text)
@@ -3442,6 +3497,7 @@ def command_status(args):
     diff = lineup_diff(live, known_models()) if live is not None else None
     print('lineup: ' + ('unavailable' if diff is None else 'no change' if not (diff['new'] or diff['missing'])
                         else 'new=%s missing=%s' % (','.join(diff['new']) or '-', ','.join(diff['missing']) or '-')))
+    print(websearch_status(web_search_sidecars(user_home())))
     settings = load_settings()
     roles = load_roles()
     print('roles: ' + '; '.join('%s %s %s [%s]' % (name, role['model'], role['effort'], ','.join(model_quota_keys(role['model'], quota))) for name, role in roles.items()))
@@ -3623,6 +3679,7 @@ def command_doctor(args):
     advisor = config.get('advisor') or {}
     print('INFO advisor: %s %s %s' % (advisor.get('model'), advisor.get('effort'), advisor.get('policy')))
     print('INFO subagent effort cap: ' + str(config.get('subagentEffortCap')))
+    doctor_web_search(web_search_sidecars(home))
     model = default_model(home)
     expected = settings.get('orchestrator')
     print('%s default model: %s (orchestrator=%s)' % ('OK  ' if expected is not None and model == expected else 'WARN', model or 'not set', expected))

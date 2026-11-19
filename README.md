@@ -318,6 +318,39 @@ cx kp update
 이전 사본은 `<state>/backups/kp-<시각>/`에 남는다.
 `~/.agents/skills/korean-protocol`에 따로 설치한 KP는 그 저장소의 방법으로 갱신한다.
 
+## 웹 검색 사이드카
+
+OpenCodex를 거치는 모델은 Codex 내장 `web_search`를 검색 사이드카로 실행한다.
+사이드카의 백엔드와 모델은 `ocx agent sidecar web`으로 정한다.
+
+Anthropic 사이드카는 권하지 않는다.
+Anthropic 웹 검색은 검색 결과의 암호화 본문을 응답 스트림에 함께 보낸다.
+그래서 검색을 두 번 이상 하면 OpenCodex의 64KB 응답 상한을 넘는다.
+
+OpenCodex v2.98.0부터 상한을 넘은 검색은 받은 답과 관계없이 실패로 처리한다.
+Anthropic 사이드카에는 요청당 전송 한도(`send_budget_exhausted`)도 걸린다.
+
+검색 사이드카에는 경량 모델을 권한다.
+
+| 백엔드 | 모델 예 | 특징 |
+|---|---|---|
+| `openai` | `gpt-6.1-terra` | 1순위다. Luna보다 조금 느리지만 출처를 더 많이 가져온다 |
+| `openai` | `gpt-6-luna` | Terra보다 조금 빠르고 출처가 적다 |
+| `gemini` | `gemini-3.8-flash` | 빠르고 출처가 많아 좋은 선택이다. Antigravity 계정이 필요하다 |
+
+OpenAI 경로는 1MB 응답 상한을 쓰고 전송 한도가 걸리지 않는다.
+대신 Codex의 ChatGPT 로그인을 넘겨받아야 한다.
+
+Gemini 경로는 단기 한도를 다른 Gemini 모델과 함께 쓴다.
+응답 상한은 64KB라서 큰 검색 답은 실패할 수 있다.
+
+```sh
+ocx agent sidecar web --backend openai --model gpt-6.1-terra --reasoning low
+```
+
+`cx doctor`와 `cx status`가 요청 경로별 사이드카를 보여 준다.
+Claude Code 요청은 `claudeCode.webSearchSidecar` 설정이 전역 설정을 덮어쓴다.
+
 ## 권장 도구
 
 온보딩은 권장 도구를 바로 설치하지 않는다.
