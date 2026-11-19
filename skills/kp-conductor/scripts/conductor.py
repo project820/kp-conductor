@@ -2584,15 +2584,18 @@ def propose_plan(routing, detected):
     tiers = load_tiers()
     templates = load_roles(SKILL / 'references' / 'roles.json')
     current_path = state() / 'local' / 'roles.json'
+    current_invalid = False
     try:
         current = load_roles(current_path) if current_path.is_file() else {}
     except SystemExit:
-        current = {}
+        current, current_invalid = {}, True
     ranked = tiers.get('models', {})
     live = set(detected.get('models') or [])
     installed = {row['name'] for row in detected.get('skills') or []}
     unknown = sorted(live - set(ranked))
     warnings = ['등급표 밖 모델: ' + model for model in unknown]
+    if current_invalid:
+        warnings.append('local roles.json 무효: 역할별 service_tier를 이어받지 않음')
     assignments, roles = {}, {}
     order = tiers.get('tier_order', [])
 
