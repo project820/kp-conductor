@@ -1446,6 +1446,15 @@ class PublicContractTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertTrue(all('korean-protocol' in role['skills'] for role in plan['roles']['roles'].values()))
 
+    def test_propose_keeps_declared_service_tier(self):
+        expected = json.loads((SCRIPT.parents[3] / 'tests/fixtures/author_assignment.json').read_text())
+        models = sorted({value[0] for key, value in expected.items() if key != 'orchestrator'})
+        pinned = {'model': expected['cx-review'][0], 'effort': 'high', 'job': 'review', 'skills': [], 'service_tier': 'default'}
+        self.local('roles.json', {'roles': {'cx-review': pinned}})
+        roles = self.plan(models)['roles']['roles']
+        self.assertEqual(roles['cx-review']['service_tier'], 'default')
+        self.assertNotIn('service_tier', roles['cx-build'])
+
     def test_single_provider_assignment_never_violates_constraints(self):
         tiers = cx.load_tiers()
         for vendor in ('openai', 'anthropic'):
@@ -2042,6 +2051,21 @@ class ReviewRegressionTests(unittest.TestCase):
         text = cx.role_toml('cx-demo', dict(role, service_tier='default'), [])[0]
         self.assertIn('service_tier = "default"', text)
         self.assertEqual(cx.load_roles(data={'roles': {'cx-demo': dict(role, service_tier='default')}})['cx-demo']['service_tier'], 'default')
+
+    def test_role_service_tier_reaches_role_file_and_doctor_detects_drift(self):
+        self.fixture()
+        self.local('roles.json', {'roles': {'cx-demo': dict(self.role, service_tier='default')}})
+        self.cli('roles', 'sync')
+        self.assertIn('service_tier = "default"', self.runtime.read_text())
+
+        def doctor():
+            with patch.object(cx, 'ocx_path', return_value='/bin/sh'), patch.object(cx, 'live_models', return_value=['old-model']):
+                with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()) as output:
+                    cx.main(['doctor', '--home', str(self.home)])
+            return output.getvalue()
+        self.assertIn('OK   role declaration cx-demo: matches', doctor())
+        self.local('roles.json', {'roles': {'cx-demo': self.role}})
+        self.assertIn('FAIL role declaration cx-demo: model/effort/sandbox/service_tier mismatch', doctor())
 
     def test_review_7_verify_rejects_well_formed_broken_tiers_and_runtime_drift(self):
         self.fixture()

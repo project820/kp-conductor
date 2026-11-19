@@ -2583,6 +2583,11 @@ def command_config(args):
 def propose_plan(routing, detected):
     tiers = load_tiers()
     templates = load_roles(SKILL / 'references' / 'roles.json')
+    current_path = state() / 'local' / 'roles.json'
+    try:
+        current = load_roles(current_path) if current_path.is_file() else {}
+    except SystemExit:
+        current = {}
     ranked = tiers.get('models', {})
     live = set(detected.get('models') or [])
     installed = {row['name'] for row in detected.get('skills') or []}
@@ -2627,6 +2632,9 @@ def propose_plan(routing, detected):
         if 'korean-protocol' in installed:
             allowed.add('korean-protocol')
         roles[ready] = dict(template, model=chosen[0], effort=chosen[1], skills=sorted(allowed))
+        # A user-declared service tier (for example Astra pinned to "default") survives re-onboarding.
+        if current.get(ready, {}).get('service_tier') is not None:
+            roles[ready]['service_tier'] = current[ready]['service_tier']
     orchestrator = next((model for model, _ in seats.get('orchestrator', []) if model in live and model in ranked), None)
     if orchestrator is None:
         warnings.append('임시 미배정 orchestrator: 살아 있는 후보 없음')
@@ -3523,7 +3531,9 @@ def command_status(args):
     print(websearch_status(web_search_sidecars(user_home())))
     settings = load_settings()
     roles = load_roles()
-    print('roles: ' + '; '.join('%s %s %s [%s]' % (name, role['model'], role['effort'], ','.join(model_quota_keys(role['model'], quota))) for name, role in roles.items()))
+    print('roles: ' + '; '.join('%s %s %s%s [%s]' % (name, role['model'], role['effort'],
+                                                   ' tier=' + role['service_tier'] if role.get('service_tier') else '',
+                                                   ','.join(model_quota_keys(role['model'], quota))) for name, role in roles.items()))
     print('overlay: ' + ('present' if any((state() / 'local' / name).is_file() for name in OVERLAY_FILES) else 'absent'))
     print('entry: ' + entry_status(user_home()))
     onboarding = settings.get('onboarding')
@@ -3720,10 +3730,17 @@ def command_doctor(args):
         path = home / '.codex/agents' / (name + '.toml')
         if path.is_file():
             text = path.read_text()
-            values = dict(re.findall(r'^(model|model_reasoning_effort)\s*=\s*("(?:[^"\\]|\\.)*")\s*$', text, re.M))
-            consistent = (values.get('model') == json.dumps(role['model'], ensure_ascii=False)
-                          and values.get('model_reasoning_effort') == json.dumps(role['effort']))
-            check(consistent, 'role declaration ' + name, 'matches' if consistent else 'model/effort mismatch')
+            values = dict(re.findall(r'^(model|model_reasoning_effort|sandbox_mode|service_tier)\s*=\s*("(?:[^"\\]|\\.)*")\s*$',
+                                     text, re.M))
+            expected = {'model': json.dumps(role['model'], ensure_ascii=False),
+                        'model_reasoning_effort': json.dumps(role['effort'])}
+            if role.get('sandbox') is not None:
+                expected['sandbox_mode'] = json.dumps(role['sandbox'])
+            if role.get('service_tier') is not None:
+                expected['service_tier'] = json.dumps(role['service_tier'])
+            consistent = values == expected
+            check(consistent, 'role declaration ' + name,
+                  'matches' if consistent else 'model/effort/sandbox/service_tier mismatch (cx roles sync 재실행)')
     for name, exists, registered, drift in role_health(home, roles):
         print('%s role %s: file=%s registered=%s' % ('OK  ' if exists and registered else 'WARN', name, exists, registered))
         if drift:
