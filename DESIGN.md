@@ -227,7 +227,7 @@
 - 단 고른 백업과 현재 개인 설정의 `ocx`나 `proxy` 값이 다르면, 그 검사 실패는 개인 설정 탓으로 보고 복구한다.
 - `overlay restore`와 verify의 복구는 먼저 현재 상태를 새 백업으로 남긴다. 출력은 "복구 전 상태 백업: <id>"다. 잘못 복구했으면 이 ID로 다시 되돌린다.
 - `settings set`은 새 백업을 만들지 않는다.
-- 검사는 tiers.json의 자료형(`models` 객체, `seats` 객체와 후보 쌍, `constraints` 목록)과 roles.json의 값(강도 `minimal|low|medium|high|xhigh|max|ultra`, sandbox `null|read-only|workspace-write|danger-full-access`)을 확인한다. 선언 설정과 생성 역할 파일의 모델·강도가 다르면 실패다.
+- 검사는 tiers.json의 자료형(`models` 객체, `seats` 객체와 후보 쌍, `constraints` 목록)과 roles.json의 값(강도 `minimal|low|medium|high|xhigh|max|ultra`, sandbox `null|read-only|workspace-write|danger-full-access`, 선택 항목 service_tier `default|fast|flex`)을 확인한다. 선언 설정과 생성 역할 파일의 모델·강도가 다르면 실패다.
 - `cx backup`은 엔진 폴더와 함께 위 소유 단위, `config.toml` 사본, 전역 `AGENTS.md` 사본을 백업한다. 출력에 보존 범위를 적는다.
 
 ### 진입과 개인 정책

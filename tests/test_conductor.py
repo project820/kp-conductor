@@ -2032,9 +2032,16 @@ class ReviewRegressionTests(unittest.TestCase):
                 self.local('tiers.json', data)
                 with self.assertRaises(SystemExit):
                     cx.load_tiers()
-        for field, value in [('effort', 'invalid'), ('sandbox', 'invalid'), ('model', '')]:
+        for field, value in [('effort', 'invalid'), ('sandbox', 'invalid'), ('model', ''), ('service_tier', 'priority')]:
             with self.subTest(field=field), self.assertRaises(SystemExit):
                 cx.load_roles(data={'roles': {'cx-demo': dict(self.role, **{field: value})}})
+
+    def test_role_service_tier_is_written_only_when_declared(self):
+        role = {'model': 'reviewer-model', 'effort': 'high', 'job': 'review', 'skills': [], 'sandbox': 'read-only'}
+        self.assertNotIn('service_tier', cx.role_toml('cx-demo', role, [])[0])
+        text = cx.role_toml('cx-demo', dict(role, service_tier='default'), [])[0]
+        self.assertIn('service_tier = "default"', text)
+        self.assertEqual(cx.load_roles(data={'roles': {'cx-demo': dict(role, service_tier='default')}})['cx-demo']['service_tier'], 'default')
 
     def test_review_7_verify_rejects_well_formed_broken_tiers_and_runtime_drift(self):
         self.fixture()

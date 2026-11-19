@@ -114,7 +114,7 @@ flowchart TD
 
 `spawn_agent`의 `agent_type`에 역할을 지정하고 `fork_turns`는 `"none"`으로 둔다. 모델과 강도는 `cx status`의 roles 줄과 `<state>/local/roles.json`이 정한다. 개인 설정이 없으면 [roles.json](references/roles.json)의 기본 예시를 쓴다.
 
-`cx roles sync`가 `~/.codex/agents/cx-*.toml`을 만든다. 역할 파일이 sandbox와 표지, 허용 스킬을 정한다. 허용 목록 밖 스킬은 역할에서 보이지 않는다.
+`cx roles sync`가 `~/.codex/agents/cx-*.toml`을 만든다. 역할 파일이 sandbox와 표지, 허용 스킬을 정한다. 허용 목록 밖 스킬은 역할에서 보이지 않는다. 역할에 `service_tier`를 적으면 역할 파일에 그대로 쓴다. 전역 `service_tier`가 `fast`여도 `"default"`를 적은 역할은 일반 등급으로 돈다.
 
 | 일 | 역할 |
 |---|---|

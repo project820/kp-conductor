@@ -356,6 +356,7 @@ def load_tiers():
 
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 SANDBOXES = (None, 'read-only', 'workspace-write', 'danger-full-access')
+SERVICE_TIERS = (None, 'default', 'fast', 'flex')
 
 
 def validate_tiers(data):
@@ -1495,7 +1496,8 @@ def load_roles(path=None, data=None):
                 or not all(isinstance(role.get(key), str) for key in ('model', 'effort', 'job'))
                 or not isinstance(role.get('skills'), list)
                 or not all(isinstance(skill, str) for skill in role['skills'])
-                or not role['model'] or role['effort'] not in EFFORTS or role.get('sandbox') not in SANDBOXES):
+                or not role['model'] or role['effort'] not in EFFORTS or role.get('sandbox') not in SANDBOXES
+                or role.get('service_tier') not in SERVICE_TIERS):
             raise SystemExit('invalid role definition: ' + name)
     return data['roles']
 
@@ -1903,6 +1905,8 @@ def role_toml(name, role, skills):
               ('model_reasoning_effort', role['effort'])]
     if role.get('sandbox') is not None:
         fields.append(('sandbox_mode', role['sandbox']))
+    if role.get('service_tier') is not None:
+        fields.append(('service_tier', role['service_tier']))
     fields.append(('developer_instructions', instructions))
     lines = [ROLE_HEADER] + [key + ' = ' + json.dumps(value, ensure_ascii=False) for key, value in fields]
     for path in sorted(hidden):
