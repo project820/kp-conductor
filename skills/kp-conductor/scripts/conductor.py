@@ -3639,6 +3639,9 @@ def command_backup(args):
         target.parent.chmod(0o700)
         target.mkdir(mode=0o700)
         for root, prefix in ((SKILL, Path()), (snapshot, Path('overlay'))):
+            # Create the prefix first: mkdir(parents=True) gives implicit parents the umask mode,
+            # so a subdirectory listed before any root file would leave overlay/ at 0o755.
+            (target / prefix).mkdir(exist_ok=True, mode=0o700)
             for source in root.rglob('*'):
                 relative = prefix / source.relative_to(root)
                 destination = target / relative

@@ -19,6 +19,10 @@ KP Conductor의 버전별 릴리스 노트다.
 - `cx onboard propose`가 현재 역할 정의에 적힌 `service_tier`를 이어받는다.
 - `cx status`의 roles 줄에 선언한 `service_tier`를 `tier=` 형식으로 보인다.
 
+### 수정
+
+- `cx backup`이 만든 `overlay/` 폴더가 Linux에서 `0o755` 권한으로 남던 문제를 고쳤다. 이제 백업 안의 모든 폴더가 `0o700`이다.
+
 ### 호환성 변경
 
 - 진입 블록 문구가 바뀌어 `cx status`가 `entry: outdated`를 보인다. `cx entry install`을 다시 실행한다.
