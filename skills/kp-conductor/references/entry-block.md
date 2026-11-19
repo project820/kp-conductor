@@ -129,10 +129,11 @@ python3 ~/.codex/skills/kp-conductor/scripts/conductor.py route "<요청 한 줄
 오류와 빈 결과, "This search failed and returned no results"를 실패로 본다.
 
 같은 질의를 Parallel, Firecrawl 순서로 다시 보낸다.
-도구는 `mcp__parallel_search__web_search`와 `mcp__firecrawl__firecrawl_search`다.
+도구 이름의 예는 `mcp__parallel_search__web_search`와 `mcp__firecrawl__firecrawl_search`다.
+실제 이름은 MCP 서버의 등록 이름에 따라 다르다.
 
 설치되지 않은 도구는 건너뛴다.
-셋 다 실패하면 근거 없는 결론을 쓰지 않는다.
+설치된 도구가 모두 실패하면 근거 없는 결론을 쓰지 않는다.
 
 실패한 질의와 오류 문구를 보고한다.
 조사 없이 쓴 부분은 "미확인"으로 표시한다.

@@ -39,7 +39,7 @@ flowchart TD
 | `retro_apply` | `propose`이면 회고 변경은 제안만 남긴다. `off`이면 이 컴퓨터에서는 회고하지 않는다 |
 | `checkpoint` | 같은 프로젝트의 미완료 작업이 현재 요청과 같으면 알리고 이어서 진행한다 |
 | `profile` | `none`이면 균형을 쓴다. `saving=true`이면 절약 상태를 적용한다 |
-| `websearch` | 요청 경로별 검색 사이드카를 확인한다. `anthropic`이면 처음부터 Parallel로 찾고 전환 명령을 사용자에게 알린다 |
+| `websearch` | 요청 경로별 검색 사이드카를 확인한다. `anthropic`이면 처음부터 Parallel로 찾고 전환 방법을 사용자에게 알린다 |
 | `retro`, `lineup` | 회고 기한이나 모델 변화가 있으면 현재 요청 뒤 retrospective.md를 따른다. `retro: off`이면 회고와 신규 모델 반영을 모두 건너뛴다 |
 
 ## 매 요청: 분류

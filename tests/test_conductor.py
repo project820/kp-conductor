@@ -845,37 +845,54 @@ class ConductorTests(unittest.TestCase):
         home = self.write_opencodex_config({
             'webSearchSidecar': {'backend': 'anthropic', 'model': 'claude-haiku-5-5'},
             'claudeCode': {'webSearchSidecar': {'backend': 'openai', 'model': 'gpt-6.1-terra'}}})
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('anthropic', 'claude-haiku-5-5'),
-                                                        'claude-code': ('openai', 'gpt-6.1-terra')})
-        self.write_opencodex_config({'webSearchSidecar': {'model': 'gpt-6.1-terra'}, 'claudeCode': {'webSearchSidecar': {}}})
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'gpt-6.1-terra'),
-                                                        'claude-code': ('openai', 'gpt-6.1-terra')})
-        self.write_opencodex_config({'claudeCode': None})
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default'), 'claude-code': ('unknown', 'unknown')})
-        self.write_opencodex_config({'webSearchSidecar': {'backend': 'bogus', 'enabled': True}, 'claudeCode': {}})
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default')})
-        self.write_opencodex_config({'webSearchSidecar': {'backend': 'gemini', 'enabled': False}})
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('disabled', 'default')})
-        self.write_opencodex_config('{')
-        self.assertEqual(cx.web_search_sidecars(home), {'codex': ('unknown', 'unknown')})
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('OPENCODEX_HOME', None)
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('anthropic', 'claude-haiku-5-5'),
+                                                            'claude-code': ('openai', 'gpt-6.1-terra')})
+            self.write_opencodex_config({'webSearchSidecar': {'model': 'gpt-6.1-terra'}, 'claudeCode': {'webSearchSidecar': {}}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'gpt-6.1-terra'),
+                                                            'claude-code': ('openai', 'gpt-6.1-terra', 'inherited')})
+            for claude in (None, {'webSearchSidecar': None}, {}):
+                self.write_opencodex_config({'claudeCode': claude})
+                self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default')}, claude)
+            self.write_opencodex_config({'claudeCode': {'webSearchSidecar': 'anthropic'}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default'), 'claude-code': ('unknown', 'unknown')})
+            self.write_opencodex_config({'webSearchSidecar': {'backend': 'bogus', 'enabled': True}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default')})
+            self.write_opencodex_config({'webSearchSidecar': {'backend': 'gemini', 'enabled': False}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('disabled', 'default')})
+            self.write_opencodex_config('{')
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('unknown', 'unknown')})
+            other = Path(self.home.name) / 'ocx-home'
+            other.mkdir()
+            (other / 'config.json').write_text(json.dumps({'webSearchSidecar': {'backend': 'xai', 'model': 'grok-4.7'}}))
+            os.environ['OPENCODEX_HOME'] = str(other)
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('xai', 'grok-4.7')})
 
-    def test_web_search_status_recommends_switch_only_for_anthropic(self):
+    def test_web_search_switch_targets_the_block_that_selects_anthropic(self):
         self.assertEqual(cx.websearch_status({'codex': ('openai', 'gpt-6.1-terra')}), 'websearch: codex openai/gpt-6.1-terra')
         line = cx.websearch_status({'codex': ('gemini', 'gemini-3.8-flash'), 'claude-code': ('anthropic', 'claude-haiku-5-5')})
         self.assertTrue(line.startswith('websearch: codex gemini/gemini-3.8-flash; claude-code anthropic/claude-haiku-5-5 ('))
-        self.assertIn(cx.WEB_SEARCH_SWITCH, line)
+        self.assertIn(cx.WEB_SEARCH_CLAUDE_SWITCH, line)
+        self.assertNotIn(cx.WEB_SEARCH_SWITCH, line)
+        inherited = cx.websearch_status({'codex': ('anthropic', 'm'), 'claude-code': ('anthropic', 'm', 'inherited')})
+        self.assertIn(cx.WEB_SEARCH_SWITCH, inherited)
+        self.assertNotIn(cx.WEB_SEARCH_CLAUDE_SWITCH, inherited)
 
     def test_doctor_warns_on_anthropic_web_search_without_changing_exit_code(self):
         base = {'subagentModels': ['worker'], 'advisor': {'enabled': True, 'model': 'claude-fable'}, 'subagentEffortCap': 'xhigh'}
-        self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'openai', 'model': 'gpt-6.1-terra'}))
-        output, code = self.doctor_output()
-        self.assertIn('OK   web search sidecar (codex): backend=openai model=gpt-6.1-terra\n', output)
-        self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'anthropic', 'model': 'claude-haiku-5-5'},
-                                         claudeCode={'webSearchSidecar': {'backend': 'gemini', 'model': 'gemini-3.8-flash'}}))
-        output, warned = self.doctor_output()
-        self.assertIn('WARN web search sidecar (codex): backend=anthropic model=claude-haiku-5-5; 64KB response cap', output)
-        self.assertIn(cx.WEB_SEARCH_SWITCH, output)
-        self.assertIn('OK   web search sidecar (claude-code): backend=gemini model=gemini-3.8-flash; shares short-term quota', output)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('OPENCODEX_HOME', None)
+            self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'openai', 'model': 'gpt-6.1-terra'}))
+            output, code = self.doctor_output()
+            self.assertIn('OK   web search sidecar (codex): backend=openai model=gpt-6.1-terra\n', output)
+            self.assertIn('INFO web search sidecar check reads the config only', output)
+            self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'gemini', 'model': 'gemini-3.8-flash'},
+                                             claudeCode={'webSearchSidecar': {'backend': 'anthropic', 'model': 'claude-haiku-5-5'}}))
+            output, warned = self.doctor_output()
+        self.assertIn('OK   web search sidecar (codex): backend=gemini model=gemini-3.8-flash; shares short-term quota', output)
+        self.assertIn('WARN web search sidecar (claude-code): backend=anthropic model=claude-haiku-5-5; 64KB response cap', output)
+        self.assertIn('switch: ' + cx.WEB_SEARCH_CLAUDE_SWITCH, output)
         self.assertEqual(warned, code)
 
     def test_doctor_validates_routing_and_warns_without_failing_on_missing_or_disallowed(self):

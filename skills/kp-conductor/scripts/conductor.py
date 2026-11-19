@@ -3407,16 +3407,21 @@ def command_skills_suggest(args):
 
 WEB_SEARCH_BACKENDS = ('anthropic', 'xai', 'gemini', 'exa')
 WEB_SEARCH_SWITCH = 'ocx agent sidecar web --backend openai --model gpt-6.1-terra --reasoning low'
+WEB_SEARCH_CLAUDE_SWITCH = 'edit or remove claudeCode.webSearchSidecar in the OpenCodex config.json'
 WEB_SEARCH_NOTES = {
     'openai': ('OK  ', ''),
     'gemini': ('OK  ', 'shares short-term quota with other Gemini models'),
     'xai': ('INFO', 'response size cap can reject large search answers'),
     'exa': ('INFO', ''),
-    'anthropic': ('WARN', '64KB response cap and per-request send budget reject most multi-search answers; '
-                          'switch: ' + WEB_SEARCH_SWITCH),
+    'anthropic': ('WARN', '64KB response cap and per-request send budget reject most multi-search answers'),
     'disabled': ('WARN', 'web search sidecar is off'),
     'unknown': ('WARN', 'OpenCodex config unreadable'),
 }
+
+
+def opencodex_config_path(home):
+    configured = os.environ.get('OPENCODEX_HOME')
+    return Path(configured).expanduser() / 'config.json' if configured else Path(home) / '.opencodex' / 'config.json'
 
 
 def web_search_sidecar(block):
@@ -3429,34 +3434,48 @@ def web_search_sidecar(block):
 
 
 def web_search_sidecars(home):
-    """Search sidecar per request path. Codex requests use the global block; Claude Code merges its override."""
-    config = read_json(Path(home) / '.opencodex' / 'config.json', None)
+    """Search sidecar per request path. Codex requests use the global block; Claude Code merges its override.
+
+    Only the global and Claude Code blocks are read. Per-provider webSearchBridge settings and
+    native passthrough requests are out of scope, and sidecar credentials are not checked.
+    """
+    config = read_json(opencodex_config_path(home), None)
     if not isinstance(config, dict):
         return {'codex': ('unknown', 'unknown')}
     block = config.get('webSearchSidecar')
     block = block if isinstance(block, dict) else {}
     paths = {'codex': web_search_sidecar(block)}
-    if 'claudeCode' in config:
-        section = config['claudeCode']
-        if not isinstance(section, dict):
-            paths['claude-code'] = ('unknown', 'unknown')
-        elif 'webSearchSidecar' in section:
-            override = section['webSearchSidecar']
-            paths['claude-code'] = (web_search_sidecar(dict(block, **override)) if isinstance(override, dict)
-                                    else ('unknown', 'unknown'))
+    section = config.get('claudeCode')
+    override = section.get('webSearchSidecar') if isinstance(section, dict) else None
+    if isinstance(override, dict):
+        paths['claude-code'] = web_search_sidecar(dict(block, **override))
+        if 'backend' not in override:
+            paths['claude-code'] += ('inherited',)
+    elif override is not None:
+        paths['claude-code'] = ('unknown', 'unknown')
     return paths
 
 
+def web_search_switch(path, sidecar):
+    # A Claude Code override without its own backend inherits the global one; fix the global block.
+    return WEB_SEARCH_CLAUDE_SWITCH if path == 'claude-code' and sidecar[2:] != ('inherited',) else WEB_SEARCH_SWITCH
+
+
 def doctor_web_search(paths):
-    for path, (backend, model) in paths.items():
+    for path, sidecar in paths.items():
+        backend, model = sidecar[:2]
         level, note = WEB_SEARCH_NOTES[backend]
+        if backend == 'anthropic':
+            note += '; switch: ' + web_search_switch(path, sidecar)
         print('%s web search sidecar (%s): backend=%s model=%s%s' % (level, path, backend, model, '; ' + note if note else ''))
+    print('INFO web search sidecar check reads the config only; sidecar credentials are not verified')
 
 
 def websearch_status(paths):
-    line = 'websearch: ' + '; '.join('%s %s/%s' % (path, backend, model) for path, (backend, model) in paths.items())
-    if any(backend == 'anthropic' for backend, _ in paths.values()):
-        line += ' (anthropic 사이드카는 검색이 자주 실패한다. 처음부터 Parallel을 쓰고 전환을 권한다: %s)' % WEB_SEARCH_SWITCH
+    line = 'websearch: ' + '; '.join('%s %s/%s' % ((path,) + sidecar[:2]) for path, sidecar in paths.items())
+    switches = sorted({web_search_switch(path, sidecar) for path, sidecar in paths.items() if sidecar[0] == 'anthropic'})
+    if switches:
+        line += ' (anthropic 사이드카는 검색이 자주 실패한다. 처음부터 Parallel을 쓰고 전환을 권한다: %s)' % '; '.join(switches)
     return line
 
 

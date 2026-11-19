@@ -320,14 +320,15 @@ cx kp update
 
 ## 웹 검색 사이드카
 
-OpenCodex를 거치는 모델은 Codex 내장 `web_search`를 검색 사이드카로 실행한다.
+OpenCodex가 번역하는 모델(Claude 등)은 Codex 내장 `web_search`를 검색 사이드카로 실행한다.
+원래 기능 그대로 전달하는 OpenAI 모델은 사이드카를 쓰지 않는다.
 사이드카의 백엔드와 모델은 `ocx agent sidecar web`으로 정한다.
 
 Anthropic 사이드카는 권하지 않는다.
 Anthropic 웹 검색은 검색 결과의 암호화 본문을 응답 스트림에 함께 보낸다.
 그래서 검색을 두 번 이상 하면 OpenCodex의 64KB 응답 상한을 넘는다.
 
-OpenCodex v2.98.0부터 상한을 넘은 검색은 받은 답과 관계없이 실패로 처리한다.
+OpenCodex v2.98.0부터 응답이 끝나기 전에 상한에 닿으면 그 검색을 실패로 처리한다.
 Anthropic 사이드카에는 요청당 전송 한도(`send_budget_exhausted`)도 걸린다.
 
 검색 사이드카에는 경량 모델을 권한다.
@@ -338,7 +339,7 @@ Anthropic 사이드카에는 요청당 전송 한도(`send_budget_exhausted`)도
 | `openai` | `gpt-6-luna` | Terra보다 조금 빠르고 출처가 적다 |
 | `gemini` | `gemini-3.8-flash` | 빠르고 출처가 많아 좋은 선택이다. Antigravity 계정이 필요하다 |
 
-OpenAI 경로는 1MB 응답 상한을 쓰고 전송 한도가 걸리지 않는다.
+OpenAI 경로는 전송 1MB, 본문 64K자 상한을 쓰고 전송 한도가 걸리지 않는다.
 대신 Codex의 ChatGPT 로그인을 넘겨받아야 한다.
 
 Gemini 경로는 단기 한도를 다른 Gemini 모델과 함께 쓴다.
@@ -349,7 +350,13 @@ ocx agent sidecar web --backend openai --model gpt-6.1-terra --reasoning low
 ```
 
 `cx doctor`와 `cx status`가 요청 경로별 사이드카를 보여 준다.
+점검 범위는 전역 설정과 Claude Code 설정이며 인증 상태는 확인하지 않는다.
+
 Claude Code 요청은 `claudeCode.webSearchSidecar` 설정이 전역 설정을 덮어쓴다.
+위 명령은 전역 설정만 바꾼다.
+Claude Code 경로가 `anthropic`이면 OpenCodex `config.json`에서 그 블록을 고치거나 지운다.
+
+제공자별 `webSearchBridge` 설정은 점검하지 않는다.
 
 ## 권장 도구
 
