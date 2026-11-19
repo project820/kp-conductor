@@ -3420,7 +3420,7 @@ WEB_SEARCH_NOTES = {
 
 
 def opencodex_config_path(home):
-    configured = os.environ.get('OPENCODEX_HOME')
+    configured = (os.environ.get('OPENCODEX_HOME') or '').strip()
     return Path(configured).expanduser() / 'config.json' if configured else Path(home) / '.opencodex' / 'config.json'
 
 

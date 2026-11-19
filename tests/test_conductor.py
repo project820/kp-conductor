@@ -12,6 +12,7 @@ from unittest.mock import patch
 # Every test runs against a throwaway home; no test may reach the real ~/.codex.
 TEST_HOME = tempfile.TemporaryDirectory(prefix='conductor-test-home-')
 os.environ['HOME'] = TEST_HOME.name
+os.environ.pop('OPENCODEX_HOME', None)
 
 SCRIPT = Path(__file__).resolve().parent.parent / 'skills' / 'kp-conductor' / 'scripts' / 'conductor.py'
 spec = importlib.util.spec_from_file_location('conductor_module', SCRIPT)
