@@ -356,6 +356,7 @@ def load_tiers():
 
 EFFORTS = ('minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')
 SANDBOXES = (None, 'read-only', 'workspace-write', 'danger-full-access')
+SERVICE_TIERS = (None, 'default', 'fast', 'flex')
 
 
 def validate_tiers(data):
@@ -1495,7 +1496,8 @@ def load_roles(path=None, data=None):
                 or not all(isinstance(role.get(key), str) for key in ('model', 'effort', 'job'))
                 or not isinstance(role.get('skills'), list)
                 or not all(isinstance(skill, str) for skill in role['skills'])
-                or not role['model'] or role['effort'] not in EFFORTS or role.get('sandbox') not in SANDBOXES):
+                or not role['model'] or role['effort'] not in EFFORTS or role.get('sandbox') not in SANDBOXES
+                or role.get('service_tier') not in SERVICE_TIERS):
             raise SystemExit('invalid role definition: ' + name)
     return data['roles']
 
@@ -1903,6 +1905,8 @@ def role_toml(name, role, skills):
               ('model_reasoning_effort', role['effort'])]
     if role.get('sandbox') is not None:
         fields.append(('sandbox_mode', role['sandbox']))
+    if role.get('service_tier') is not None:
+        fields.append(('service_tier', role['service_tier']))
     fields.append(('developer_instructions', instructions))
     lines = [ROLE_HEADER] + [key + ' = ' + json.dumps(value, ensure_ascii=False) for key, value in fields]
     for path in sorted(hidden):
@@ -2579,11 +2583,19 @@ def command_config(args):
 def propose_plan(routing, detected):
     tiers = load_tiers()
     templates = load_roles(SKILL / 'references' / 'roles.json')
+    current_path = state() / 'local' / 'roles.json'
+    current_invalid = False
+    try:
+        current = load_roles(current_path) if current_path.is_file() else {}
+    except SystemExit:
+        current, current_invalid = {}, True
     ranked = tiers.get('models', {})
     live = set(detected.get('models') or [])
     installed = {row['name'] for row in detected.get('skills') or []}
     unknown = sorted(live - set(ranked))
     warnings = ['등급표 밖 모델: ' + model for model in unknown]
+    if current_invalid:
+        warnings.append('local roles.json 무효: 역할별 service_tier를 이어받지 않음')
     assignments, roles = {}, {}
     order = tiers.get('tier_order', [])
 
@@ -2623,6 +2635,9 @@ def propose_plan(routing, detected):
         if 'korean-protocol' in installed:
             allowed.add('korean-protocol')
         roles[ready] = dict(template, model=chosen[0], effort=chosen[1], skills=sorted(allowed))
+        # A user-declared service tier (for example Astra pinned to "default") survives re-onboarding.
+        if current.get(ready, {}).get('service_tier') is not None:
+            roles[ready]['service_tier'] = current[ready]['service_tier']
     orchestrator = next((model for model, _ in seats.get('orchestrator', []) if model in live and model in ranked), None)
     if orchestrator is None:
         warnings.append('임시 미배정 orchestrator: 살아 있는 후보 없음')
@@ -3405,6 +3420,80 @@ def command_skills_suggest(args):
 
 # ---- commands --------------------------------------------------------------
 
+WEB_SEARCH_BACKENDS = ('anthropic', 'xai', 'gemini', 'exa')
+WEB_SEARCH_SWITCH = 'ocx agent sidecar web --backend openai --model gpt-6.1-terra --reasoning low'
+WEB_SEARCH_CLAUDE_SWITCH = 'edit or remove claudeCode.webSearchSidecar in the OpenCodex config.json'
+WEB_SEARCH_NOTES = {
+    'openai': ('OK  ', ''),
+    'gemini': ('OK  ', 'shares short-term quota with other Gemini models'),
+    'xai': ('INFO', 'response size cap can reject large search answers'),
+    'exa': ('INFO', ''),
+    'anthropic': ('WARN', '64KB response cap and per-request send budget reject most multi-search answers'),
+    'disabled': ('WARN', 'web search sidecar is off'),
+    'unknown': ('WARN', 'OpenCodex config unreadable'),
+}
+
+
+def opencodex_config_path(home):
+    configured = (os.environ.get('OPENCODEX_HOME') or '').strip()
+    return Path(configured).expanduser() / 'config.json' if configured else Path(home) / '.opencodex' / 'config.json'
+
+
+def web_search_sidecar(block):
+    """OpenCodex runs a missing or unsupported backend as openai (resolveSidecarBackend)."""
+    if block.get('enabled') is False:
+        return 'disabled', 'default'
+    backend = block.get('backend') if block.get('backend') in WEB_SEARCH_BACKENDS else 'openai'
+    model = block.get('model')
+    return backend, model if isinstance(model, str) and model.strip() else 'default'
+
+
+def web_search_sidecars(home):
+    """Search sidecar per request path. Codex requests use the global block; Claude Code merges its override.
+
+    Only the global and Claude Code blocks are read. Per-provider webSearchBridge settings and
+    native passthrough requests are out of scope, and sidecar credentials are not checked.
+    """
+    config = read_json(opencodex_config_path(home), None)
+    if not isinstance(config, dict):
+        return {'codex': ('unknown', 'unknown')}
+    block = config.get('webSearchSidecar')
+    block = block if isinstance(block, dict) else {}
+    paths = {'codex': web_search_sidecar(block)}
+    section = config.get('claudeCode')
+    override = section.get('webSearchSidecar') if isinstance(section, dict) else None
+    if isinstance(override, dict):
+        paths['claude-code'] = web_search_sidecar(dict(block, **override))
+        if 'backend' not in override:
+            paths['claude-code'] += ('inherited',)
+    elif override is not None:
+        paths['claude-code'] = ('unknown', 'unknown')
+    return paths
+
+
+def web_search_switch(path, sidecar):
+    # A Claude Code override without its own backend inherits the global one; fix the global block.
+    return WEB_SEARCH_CLAUDE_SWITCH if path == 'claude-code' and sidecar[2:] != ('inherited',) else WEB_SEARCH_SWITCH
+
+
+def doctor_web_search(paths):
+    for path, sidecar in paths.items():
+        backend, model = sidecar[:2]
+        level, note = WEB_SEARCH_NOTES[backend]
+        if backend == 'anthropic':
+            note += '; switch: ' + web_search_switch(path, sidecar)
+        print('%s web search sidecar (%s): backend=%s model=%s%s' % (level, path, backend, model, '; ' + note if note else ''))
+    print('INFO web search sidecar check reads the config only; sidecar credentials are not verified')
+
+
+def websearch_status(paths):
+    line = 'websearch: ' + '; '.join('%s %s/%s' % ((path,) + sidecar[:2]) for path, sidecar in paths.items())
+    switches = sorted({web_search_switch(path, sidecar) for path, sidecar in paths.items() if sidecar[0] == 'anthropic'})
+    if switches:
+        line += ' (anthropic 사이드카는 검색이 자주 실패한다. 처음부터 Parallel을 쓰고 전환을 권한다: %s)' % '; '.join(switches)
+    return line
+
+
 def command_status(args):
     text = run([ocx_path(), 'provider', 'quota'], 20)
     quota, burn = parse_quota(text), quota_burn(text)
@@ -3442,9 +3531,12 @@ def command_status(args):
     diff = lineup_diff(live, known_models()) if live is not None else None
     print('lineup: ' + ('unavailable' if diff is None else 'no change' if not (diff['new'] or diff['missing'])
                         else 'new=%s missing=%s' % (','.join(diff['new']) or '-', ','.join(diff['missing']) or '-')))
+    print(websearch_status(web_search_sidecars(user_home())))
     settings = load_settings()
     roles = load_roles()
-    print('roles: ' + '; '.join('%s %s %s [%s]' % (name, role['model'], role['effort'], ','.join(model_quota_keys(role['model'], quota))) for name, role in roles.items()))
+    print('roles: ' + '; '.join('%s %s %s%s [%s]' % (name, role['model'], role['effort'],
+                                                   ' tier=' + role['service_tier'] if role.get('service_tier') else '',
+                                                   ','.join(model_quota_keys(role['model'], quota))) for name, role in roles.items()))
     print('overlay: ' + ('present' if any((state() / 'local' / name).is_file() for name in OVERLAY_FILES) else 'absent'))
     print('entry: ' + entry_status(user_home()))
     onboarding = settings.get('onboarding')
@@ -3547,6 +3639,9 @@ def command_backup(args):
         target.parent.chmod(0o700)
         target.mkdir(mode=0o700)
         for root, prefix in ((SKILL, Path()), (snapshot, Path('overlay'))):
+            # Create the prefix first: mkdir(parents=True) gives implicit parents the umask mode,
+            # so a subdirectory listed before any root file would leave overlay/ at 0o755.
+            (target / prefix).mkdir(exist_ok=True, mode=0o700)
             for source in root.rglob('*'):
                 relative = prefix / source.relative_to(root)
                 destination = target / relative
@@ -3623,6 +3718,7 @@ def command_doctor(args):
     advisor = config.get('advisor') or {}
     print('INFO advisor: %s %s %s' % (advisor.get('model'), advisor.get('effort'), advisor.get('policy')))
     print('INFO subagent effort cap: ' + str(config.get('subagentEffortCap')))
+    doctor_web_search(web_search_sidecars(home))
     model = default_model(home)
     expected = settings.get('orchestrator')
     print('%s default model: %s (orchestrator=%s)' % ('OK  ' if expected is not None and model == expected else 'WARN', model or 'not set', expected))
@@ -3640,10 +3736,17 @@ def command_doctor(args):
         path = home / '.codex/agents' / (name + '.toml')
         if path.is_file():
             text = path.read_text()
-            values = dict(re.findall(r'^(model|model_reasoning_effort)\s*=\s*("(?:[^"\\]|\\.)*")\s*$', text, re.M))
-            consistent = (values.get('model') == json.dumps(role['model'], ensure_ascii=False)
-                          and values.get('model_reasoning_effort') == json.dumps(role['effort']))
-            check(consistent, 'role declaration ' + name, 'matches' if consistent else 'model/effort mismatch')
+            values = dict(re.findall(r'^(model|model_reasoning_effort|sandbox_mode|service_tier)\s*=\s*("(?:[^"\\]|\\.)*")\s*$',
+                                     text, re.M))
+            expected = {'model': json.dumps(role['model'], ensure_ascii=False),
+                        'model_reasoning_effort': json.dumps(role['effort'])}
+            if role.get('sandbox') is not None:
+                expected['sandbox_mode'] = json.dumps(role['sandbox'])
+            if role.get('service_tier') is not None:
+                expected['service_tier'] = json.dumps(role['service_tier'])
+            consistent = values == expected
+            check(consistent, 'role declaration ' + name,
+                  'matches' if consistent else 'model/effort/sandbox/service_tier mismatch (cx roles sync 재실행)')
     for name, exists, registered, drift in role_health(home, roles):
         print('%s role %s: file=%s registered=%s' % ('OK  ' if exists and registered else 'WARN', name, exists, registered))
         if drift:

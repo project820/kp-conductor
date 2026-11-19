@@ -152,7 +152,7 @@
 1. 역할마다 `tiers.json`의 `seats` 후보를 순서대로 보고, 살아 있는 모델 가운데 `constraints`를 어기지 않는 첫 후보를 고른다.
 2. 후보가 없으면 같은 등급 이상의 살아 있는 모델 가운데 제약을 어기지 않는 모델을 고르고 `warnings`에 "임시"로 적는다. 강도는 `seat_kind`와 `default_effort`로 정한다(탐색 low, 구현 high, 검토·판단 xhigh).
 3. 등급표 밖 모델은 자동 배정하지 않는다. `warnings`와 `notes`에 적는다.
-4. 역할의 sandbox와 job은 기본 예시 roles.json의 값을 쓴다. 허용 스킬은 그 역할이 맡은 경로들의 스킬 합집합에, 기본 예시 역할의 허용 스킬 가운데 설치된 것을 더한다. `korean-protocol`이 설치돼 있으면 모든 역할에 넣는다.
+4. 역할의 sandbox와 job은 기본 예시 roles.json의 값을 쓴다. 현재 local roles.json에 선언된 service_tier는 그대로 이어받는다. 허용 스킬은 그 역할이 맡은 경로들의 스킬 합집합에, 기본 예시 역할의 허용 스킬 가운데 설치된 것을 더한다. `korean-protocol`이 설치돼 있으면 모든 역할에 넣는다.
 5. `settings.orchestrator`는 `seats.orchestrator`의 첫 살아 있는 후보다.
 
 작성자 모델 구성(Terra, Sol, Astra, Fable, Opus가 모두 살아 있음)을 넣으면 작성자의 현행 배정과 같은 모델·강도가 나와야 한다. 이것을 테스트로 고정한다. 기대값은 `tests/` 안의 고정 자료로 둔다.
@@ -172,6 +172,7 @@
 | KP 설치(`language`가 `ko`) | WARN |
 | 역할 파일 상태, 경로 스킬 설치·허용 | WARN (현행과 같음) |
 | 개인 설정 없음 | WARN "온보딩 전" |
+| 웹 검색 사이드카(요청 경로별) | `anthropic`·`disabled`·설정 읽기 실패면 WARN |
 
 ## 10. 진입 블록
 
@@ -226,7 +227,7 @@
 - 단 고른 백업과 현재 개인 설정의 `ocx`나 `proxy` 값이 다르면, 그 검사 실패는 개인 설정 탓으로 보고 복구한다.
 - `overlay restore`와 verify의 복구는 먼저 현재 상태를 새 백업으로 남긴다. 출력은 "복구 전 상태 백업: <id>"다. 잘못 복구했으면 이 ID로 다시 되돌린다.
 - `settings set`은 새 백업을 만들지 않는다.
-- 검사는 tiers.json의 자료형(`models` 객체, `seats` 객체와 후보 쌍, `constraints` 목록)과 roles.json의 값(강도 `minimal|low|medium|high|xhigh|max|ultra`, sandbox `null|read-only|workspace-write|danger-full-access`)을 확인한다. 선언 설정과 생성 역할 파일의 모델·강도가 다르면 실패다.
+- 검사는 tiers.json의 자료형(`models` 객체, `seats` 객체와 후보 쌍, `constraints` 목록)과 roles.json의 값(강도 `minimal|low|medium|high|xhigh|max|ultra`, sandbox `null|read-only|workspace-write|danger-full-access`, 선택 항목 service_tier `default|fast|flex`)을 확인한다. 선언 설정과 생성 역할 파일의 모델·강도·sandbox·service_tier가 다르면 실패다.
 - `cx backup`은 엔진 폴더와 함께 위 소유 단위, `config.toml` 사본, 전역 `AGENTS.md` 사본을 백업한다. 출력에 보존 범위를 적는다.
 
 ### 진입과 개인 정책

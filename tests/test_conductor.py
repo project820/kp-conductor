@@ -12,6 +12,7 @@ from unittest.mock import patch
 # Every test runs against a throwaway home; no test may reach the real ~/.codex.
 TEST_HOME = tempfile.TemporaryDirectory(prefix='conductor-test-home-')
 os.environ['HOME'] = TEST_HOME.name
+os.environ.pop('OPENCODEX_HOME', None)
 
 SCRIPT = Path(__file__).resolve().parent.parent / 'skills' / 'kp-conductor' / 'scripts' / 'conductor.py'
 spec = importlib.util.spec_from_file_location('conductor_module', SCRIPT)
@@ -835,6 +836,66 @@ class ConductorTests(unittest.TestCase):
                 cx.main(['doctor'])
         return output.getvalue(), result.exception.code
 
+    def write_opencodex_config(self, config):
+        path = Path(self.home.name) / '.opencodex' / 'config.json'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(config if isinstance(config, str) else json.dumps(config))
+        return Path(self.home.name)
+
+    def test_web_search_sidecars_follow_opencodex_request_paths(self):
+        home = self.write_opencodex_config({
+            'webSearchSidecar': {'backend': 'anthropic', 'model': 'claude-haiku-5-5'},
+            'claudeCode': {'webSearchSidecar': {'backend': 'openai', 'model': 'gpt-6.1-terra'}}})
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('OPENCODEX_HOME', None)
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('anthropic', 'claude-haiku-5-5'),
+                                                            'claude-code': ('openai', 'gpt-6.1-terra')})
+            self.write_opencodex_config({'webSearchSidecar': {'model': 'gpt-6.1-terra'}, 'claudeCode': {'webSearchSidecar': {}}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'gpt-6.1-terra'),
+                                                            'claude-code': ('openai', 'gpt-6.1-terra', 'inherited')})
+            for claude in (None, {'webSearchSidecar': None}, {}):
+                self.write_opencodex_config({'claudeCode': claude})
+                self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default')}, claude)
+            self.write_opencodex_config({'claudeCode': {'webSearchSidecar': 'anthropic'}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default'), 'claude-code': ('unknown', 'unknown')})
+            self.write_opencodex_config({'webSearchSidecar': {'backend': 'bogus', 'enabled': True}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('openai', 'default')})
+            self.write_opencodex_config({'webSearchSidecar': {'backend': 'gemini', 'enabled': False}})
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('disabled', 'default')})
+            self.write_opencodex_config('{')
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('unknown', 'unknown')})
+            other = Path(self.home.name) / 'ocx-home'
+            other.mkdir()
+            (other / 'config.json').write_text(json.dumps({'webSearchSidecar': {'backend': 'xai', 'model': 'grok-4.7'}}))
+            os.environ['OPENCODEX_HOME'] = str(other)
+            self.assertEqual(cx.web_search_sidecars(home), {'codex': ('xai', 'grok-4.7')})
+
+    def test_web_search_switch_targets_the_block_that_selects_anthropic(self):
+        self.assertEqual(cx.websearch_status({'codex': ('openai', 'gpt-6.1-terra')}), 'websearch: codex openai/gpt-6.1-terra')
+        line = cx.websearch_status({'codex': ('gemini', 'gemini-3.8-flash'), 'claude-code': ('anthropic', 'claude-haiku-5-5')})
+        self.assertTrue(line.startswith('websearch: codex gemini/gemini-3.8-flash; claude-code anthropic/claude-haiku-5-5 ('))
+        self.assertIn(cx.WEB_SEARCH_CLAUDE_SWITCH, line)
+        self.assertNotIn(cx.WEB_SEARCH_SWITCH, line)
+        inherited = cx.websearch_status({'codex': ('anthropic', 'm'), 'claude-code': ('anthropic', 'm', 'inherited')})
+        self.assertIn(cx.WEB_SEARCH_SWITCH, inherited)
+        self.assertNotIn(cx.WEB_SEARCH_CLAUDE_SWITCH, inherited)
+
+    def test_doctor_warns_on_anthropic_web_search_without_changing_exit_code(self):
+        base = {'subagentModels': ['worker'], 'advisor': {'enabled': True, 'model': 'claude-fable'}, 'subagentEffortCap': 'xhigh'}
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('OPENCODEX_HOME', None)
+            self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'openai', 'model': 'gpt-6.1-terra'}))
+            output, code = self.doctor_output()
+            self.assertIn('OK   web search sidecar (codex): backend=openai model=gpt-6.1-terra\n', output)
+            self.assertIn('INFO web search sidecar check reads the config only', output)
+            self.write_opencodex_config(dict(base, webSearchSidecar={'backend': 'gemini', 'model': 'gemini-3.8-flash'},
+                                             claudeCode={'webSearchSidecar': {'backend': 'anthropic', 'model': 'claude-haiku-5-5'}}))
+            output, warned = self.doctor_output()
+        self.assertIn('OK   web search sidecar (codex): backend=gemini model=gemini-3.8-flash; shares short-term quota', output)
+        self.assertIn('WARN web search sidecar (claude-code): backend=anthropic model=claude-haiku-5-5; 64KB response cap', output)
+        self.assertIn('switch: ' + cx.WEB_SEARCH_CLAUDE_SWITCH, output)
+        self.assertEqual(warned, code)
+
     def test_doctor_validates_routing_and_warns_without_failing_on_missing_or_disallowed(self):
         home = Path(self.home.name)
         self.make_skill('ui-combo')
@@ -1384,6 +1445,15 @@ class PublicContractTests(unittest.TestCase):
         actual['orchestrator'] = plan['settings']['orchestrator']
         self.assertEqual(actual, expected)
         self.assertTrue(all('korean-protocol' in role['skills'] for role in plan['roles']['roles'].values()))
+
+    def test_propose_keeps_declared_service_tier(self):
+        expected = json.loads((SCRIPT.parents[3] / 'tests/fixtures/author_assignment.json').read_text())
+        models = sorted({value[0] for key, value in expected.items() if key != 'orchestrator'})
+        pinned = {'model': expected['cx-review'][0], 'effort': 'high', 'job': 'review', 'skills': [], 'service_tier': 'default'}
+        self.local('roles.json', {'roles': {'cx-review': pinned}})
+        roles = self.plan(models)['roles']['roles']
+        self.assertEqual(roles['cx-review']['service_tier'], 'default')
+        self.assertNotIn('service_tier', roles['cx-build'])
 
     def test_single_provider_assignment_never_violates_constraints(self):
         tiers = cx.load_tiers()
@@ -1971,9 +2041,31 @@ class ReviewRegressionTests(unittest.TestCase):
                 self.local('tiers.json', data)
                 with self.assertRaises(SystemExit):
                     cx.load_tiers()
-        for field, value in [('effort', 'invalid'), ('sandbox', 'invalid'), ('model', '')]:
+        for field, value in [('effort', 'invalid'), ('sandbox', 'invalid'), ('model', ''), ('service_tier', 'priority')]:
             with self.subTest(field=field), self.assertRaises(SystemExit):
                 cx.load_roles(data={'roles': {'cx-demo': dict(self.role, **{field: value})}})
+
+    def test_role_service_tier_is_written_only_when_declared(self):
+        role = {'model': 'reviewer-model', 'effort': 'high', 'job': 'review', 'skills': [], 'sandbox': 'read-only'}
+        self.assertNotIn('service_tier', cx.role_toml('cx-demo', role, [])[0])
+        text = cx.role_toml('cx-demo', dict(role, service_tier='default'), [])[0]
+        self.assertIn('service_tier = "default"', text)
+        self.assertEqual(cx.load_roles(data={'roles': {'cx-demo': dict(role, service_tier='default')}})['cx-demo']['service_tier'], 'default')
+
+    def test_role_service_tier_reaches_role_file_and_doctor_detects_drift(self):
+        self.fixture()
+        self.local('roles.json', {'roles': {'cx-demo': dict(self.role, service_tier='default')}})
+        self.cli('roles', 'sync')
+        self.assertIn('service_tier = "default"', self.runtime.read_text())
+
+        def doctor():
+            with patch.object(cx, 'ocx_path', return_value='/bin/sh'), patch.object(cx, 'live_models', return_value=['old-model']):
+                with self.assertRaises(SystemExit), contextlib.redirect_stdout(io.StringIO()) as output:
+                    cx.main(['doctor', '--home', str(self.home)])
+            return output.getvalue()
+        self.assertIn('OK   role declaration cx-demo: matches', doctor())
+        self.local('roles.json', {'roles': {'cx-demo': self.role}})
+        self.assertIn('FAIL role declaration cx-demo: model/effort/sandbox/service_tier mismatch', doctor())
 
     def test_review_7_verify_rejects_well_formed_broken_tiers_and_runtime_drift(self):
         self.fixture()

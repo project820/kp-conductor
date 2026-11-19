@@ -122,3 +122,22 @@ python3 ~/.codex/skills/kp-conductor/scripts/conductor.py route "<요청 한 줄
 
 `[conductor-subagent]` 표지가 있으면 이 운용 절차를 적용하지 않는다.
 서브에이전트는 받은 범위만 수행하고 하위 서브에이전트를 띄우지 않는다.
+
+## 웹 검색 실패 대응
+
+내장 `web_search`가 실패해도 조사를 멈추지 않는다.
+오류와 빈 결과, "This search failed and returned no results"를 실패로 본다.
+
+같은 질의를 Parallel, Firecrawl 순서로 다시 보낸다.
+도구 이름의 예는 `mcp__parallel_search__web_search`와 `mcp__firecrawl__firecrawl_search`다.
+실제 이름은 MCP 서버의 등록 이름에 따라 다르다.
+
+설치되지 않은 도구는 건너뛴다.
+설치된 도구가 모두 실패하면 근거 없는 결론을 쓰지 않는다.
+
+실패한 질의와 오류 문구를 보고한다.
+조사 없이 쓴 부분은 "미확인"으로 표시한다.
+
+도구 실패는 도구 이름과 오류 문구 그대로 보고한다.
+실행했다가 실패한 일을 "실행하지 않았다"로 쓰지 않는다.
+시도하지 않은 일을 "할 수 없었다"로 쓰지 않는다.
